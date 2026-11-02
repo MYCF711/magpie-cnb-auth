@@ -513,3 +513,24 @@ CNBSESSION 会不会如期出现」——那一步必须要人，脚本没法代
 - **`POST https://api.cnb.cool/groups` 认不认 Cookie，现在还证不了**：带假 Cookie 与完全不带凭据
   返回的是一模一样的 `401 {"errcode":16,"errmsg":"The task will not run because the user is not logged in."}`。
   `src/org.mjs` 的实现按「形状对、鉴权未知」写，第一次真机跑完请回来更新这一条。
+
+### 8.7 第 4 条登录路：从宿主里真的开出了窗口（2026-11-02/03 实测）
+
+在隔离的 magpie 配置里跑 `magpie plugin login cnb` 并选第 3 条（「浏览器网页登录」），宿主确实：
+
+1. 打出了正确的说明（「先在窗口里登录 cnb.cool，再点页面上的『确认授权』，然后别关窗口」）；
+2. **把受控浏览器真的开出来了** —— 进程表里能查到带一次性 profile 的 Edge：
+
+```
+msedge.exe 45624 | C:\Users\<user>\AppData\Local\Temp\magpie-login-k2LXTV
+msedge.exe 52124 | ...\magpie-login-k2LXTV /prefetch:4
+（另有 4 个同 profile 的渲染进程）
+```
+
+3. 然后一直等到超时（没人登录），按设计返回「窗口关了但没拿到登录态」。
+
+**这一段证明了**：`authorize() → opened:true → callback() → findBrowser → 受控窗口` 这条链在真宿主里是通的，
+窗口用的是临时 profile（`magpie-login-*`），你日常 Edge 的数据没被碰。
+
+**这一段没证明**：登录之后 CNBSESSION 会不会如期出现、确认授权之后设备码那一半会不会拿到 token、
+以及登进去之后建组织 / 建仓库那两个请求上游认不认。这四件事都需要人**真的登一次**。

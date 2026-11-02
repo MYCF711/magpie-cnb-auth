@@ -216,3 +216,54 @@ test("找不到 Chromium 内核浏览器：failed，且说清装什么", async (
   assert.match(result.error, /Chrome/)
   assert.match(result.error, /Edge/)
 })
+
+test("新建的组织里没有仓库时，顺手建一个默认仓库（否则 AI 端点还是没有路径）", async () => {
+  let probe = 0
+  let listed = 0
+  const made = []
+  const ctx = makeCtx({
+    chromiumLogin: fakeChromium({ found: { CNBSESSION: SESSION } }),
+    fetchTopGroups: async () => {
+      probe += 1
+      return probe === 1 ? [] : [{ path: "tlaloc" }]
+    },
+    // 第一次列：空（刚建出来的组织）；建完仓库再列：有了
+    listRepos: async (_t, org) => {
+      listed += 1
+      return listed === 1 ? [] : [`${org}/code`]
+    },
+    createRepo: async (token, org, name) => {
+      made.push({ token, org, name })
+      return { ok: true, status: 201, body: {} }
+    },
+  })
+
+  const result = await loginViaBrowser({}, ctx)
+
+  assert.equal(made.length, 1, "空组织应当建一个仓库 —— 不建的话「帮你建组织」只做了一半")
+  assert.equal(made[0].org, "tlaloc")
+  assert.equal(made[0].name, "code", "默认仓库名取 repoName，缺省是 code")
+  assert.equal(result.metadata.orgAttempt.repo.ok, true)
+  assert.equal(result.repo, "tlaloc/code", "建完仓库后仓库路径要跟着更新")
+})
+
+test("组织是用户自己的老组织（没有仓库）时不擅自建仓 —— 只在刚建出来的组织上建", async () => {
+  const made = []
+  const ctx = makeCtx({
+    chromiumLogin: fakeChromium({ found: { CNBSESSION: SESSION } }),
+    // 一开始就有组织 ⇒ 走不到「顺手建组织」那一支
+    fetchTopGroups: async () => [{ path: "acme" }],
+    listRepos: async () => [],
+    createRepo: async () => {
+      made.push(1)
+      return { ok: true, status: 201, body: {} }
+    },
+  })
+
+  const result = await loginViaBrowser({}, ctx)
+
+  assert.equal(result.type, "success")
+  assert.equal(made.length, 0, "用户自己的空组织可能是故意的，不要替人建仓")
+  assert.equal(result.org, "acme")
+  assert.equal(result.repo, "acme/code", "没有仓库时仍然按约定猜一个路径，好让报错指向它")
+})

@@ -25,7 +25,7 @@
 import { OAUTH_CLIENT_ID, WEB_BASE } from "./context.mjs"
 import { chromiumLogin, findBrowser } from "./browser-login.mjs"
 import { pollDeviceToken, requestDeviceCode } from "./device.mjs"
-import { fetchCsrf, fetchTopGroups, fetchUser, listRepos } from "./api.mjs"
+import { createRepo, fetchCsrf, fetchTopGroups, fetchUser, listRepos } from "./api.mjs"
 import { displayNameOf, pickRepo } from "./credential.mjs"
 import { errorText } from "./http.mjs"
 import { createGroupWithSession, suggestGroupPath } from "./org.mjs"
@@ -86,6 +86,7 @@ export async function loginViaBrowser(options = {}, ctx = {}) {
   const fetchTopGroupsFn = dep("fetchTopGroups", fetchTopGroups)
   const listReposFn = dep("listRepos", listRepos)
   const createGroupFn = dep("createGroup", createGroupWithSession)
+  const createRepoFn = dep("createRepo", createRepo)
 
   // ① 本机得有一个 Chromium 内核浏览器 —— 没有这条路就不存在，与其开一半失败，不如当场说清
   const browser = findBrowserFn()
@@ -238,6 +239,20 @@ export async function loginViaBrowser(options = {}, ctx = {}) {
       groups = await fetchTopGroupsFn(access)
       org = cleanPath(options.org) || cleanPath(groups[0]?.path) || suggested
       repos = org ? await listReposFn(access, org) : []
+
+      // ⚠ 新建的组织里**一个仓库都没有**，而 AI 端点是 `/{org}/{repo}/-/ai/...` ——
+      //   没有仓库就还是跑不了模型，「帮你建组织」等于只做了一半。
+      //   所以刚建出来的空组织顺手建一个默认仓库（名字取选项里的 repoName，默认 code）。
+      //   只对「刚刚由我们建出来的组织」这么做：用户自己的老组织里没有仓库，可能是故意的。
+      if (!repos.length) {
+        const repoName = String(options.repoName || "code").replace(/^\/+|\/+$/g, "") || "code"
+        const made = await createRepoFn(access, org, repoName, {
+          description: GROUP_DESCRIPTION,
+          signal: ctx.signal,
+        })
+        orgAttempt.repo = { ok: Boolean(made?.ok), status: Number(made?.status) || 0, name: repoName }
+        if (made?.ok) repos = await listReposFn(access, org)
+      }
     }
   }
 

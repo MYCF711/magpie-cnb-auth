@@ -107,6 +107,30 @@ export async function listRepos(token, org, { signal } = {}) {
   }
 }
 
+/**
+ * 在组织下建一个仓库。
+ *
+ * `POST /{group}/-/repos`，OpenAPI 要求访问令牌带 `group-resource:rw`。
+ * **会改变用户账号**，所以只允许在「用户亲手点了登录、且组织里一个仓库都没有」时调用一次。
+ *
+ * 返回值刻意做成 `{ ok, status, body }` 而不抛 —— 建仓失败不该把一次成功的登录判成失败。
+ */
+export async function createRepo(token, org, name = "code", { description = "", signal } = {}) {
+  if (!token || !org) return { ok: false, status: 0, body: { errmsg: "缺少访问令牌或组织" } }
+  try {
+    const response = await fetch(`${API_BASE}/${org}/-/repos`, {
+      method: "POST",
+      headers: baseHeaders({ authorization: `Bearer ${token}`, "content-type": "application/json" }),
+      body: JSON.stringify({ name, description, visibility: "private" }),
+      signal: abortSignal(signal, TIMEOUT.list),
+    })
+    const parsed = await readBody(response)
+    return { ok: response.ok, status: response.status, body: parsed }
+  } catch (error) {
+    return { ok: false, status: 0, body: { errmsg: String(error?.message || error) } }
+  }
+}
+
 /** 当月额度：`credit_in_milli.{free,total}`。单位是「毫 Credit」（1000 = 1 Credit）。 */
 export function fetchQuota(token, org, { signal } = {}) {
   return cnbApi(`/${org}/-/charge/quota`, { token, signal, timeoutMs: TIMEOUT.quota })
