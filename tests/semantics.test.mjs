@@ -702,3 +702,13 @@ test("续期之后（合并结果）通道仍然是 cookie —— metadata.sessi
   assert.equal(s.token, "", "纯 session 不能把会话当成 PAT 去查额度（那必然 401）")
   assert.equal(pickTransport(s, {}), "cookie")
 })
+
+test("选项：createOrg 默认关闭，只有显式 true 才开", async () => {
+  // 真机实测（2026-11-03）：一个根组织**一年只能建 1 个**，而且删掉不退还。
+  // 所以这个开关必须是**显式 opt-in**——而且它必须真的能从选项里传进来，
+  // 否则「默认关闭」会变成「永远关闭」（normaliseOptions 丢过一个字段就会这样）。
+  assert.equal(normaliseOptions({}).createOrg, false, "默认不建")
+  assert.equal(normaliseOptions({ createOrg: "true" }).createOrg, false, "字符串不算，只认布尔 true")
+  assert.equal(normaliseOptions({ createOrg: true }).createOrg, true, "显式 true 才放行")
+  assert.equal(normaliseOptions({ repoName: "hello" }).repoName, "hello", "repoName 也照样透传")
+})

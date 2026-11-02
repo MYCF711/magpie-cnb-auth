@@ -34,9 +34,15 @@ import { abortSignal, baseHeaders, readBody } from "./http.mjs"
  */
 export const GROUP_API = `${WEB_BASE}/groups`
 
-/** CNB 组织 slug 的长度区间（2~30） */
-export const GROUP_SLUG_MIN = 2
-export const GROUP_SLUG_MAX = 30
+/**
+ * CNB 组织 slug 的长度区间。
+ *
+ * ⚠ 这不是猜的：上游自己会说。真机实测（2026-11-03）往 `POST /groups` 发 `{path:"A"}`：
+ *   `400 {"errcode":3,"errmsg":"Organization name length is invalid (must be between 3 and 50 characters)"}`
+ * （早先按需求推的 2~30 是错的 —— 2 个字符会被拒，31~50 又是我多截的。）
+ */
+export const GROUP_SLUG_MIN = 3
+export const GROUP_SLUG_MAX = 50
 
 /** 一个字符都留不下时的兜底（中文昵称很常见，不能因此报错） */
 const FALLBACK_SLUG = "cnb-user"
@@ -53,7 +59,7 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "")
 }
 
-/** 长度落到 2~30：太长截断并掐掉尾巴上的 `-`；太短（<2）返回空串，交给调用方兜底 */
+/** 长度落到 3~50：太长截断并掐掉尾巴上的 `-`；太短（<3）返回空串，交给调用方兜底 */
 function clampSlug(slug) {
   const s = String(slug || "").slice(0, GROUP_SLUG_MAX).replace(/-+$/g, "")
   return s.length >= GROUP_SLUG_MIN ? s : ""
@@ -72,11 +78,11 @@ function withSuffix(base, suffix) {
  * 为什么要它：CNB 给新账号自动生成的用户名长这样 —— `cnb.dI2DzHg0QHA`（实测 2026-11-02），
  * 带点号、大小写混排，直接当组织名会被拒；而昵称更常见的是中文，一个字符都留不下。
  *
- * 规则（全部小写字母数字与 `-`，长度 2~30）：
+ * 规则（全部小写字母数字与 `-`，长度 3~50，实测自上游的报错文案）：
  *   ① 去掉 `cnb.` 前缀 —— 那是「系统编的」标记，不是名字；
  *   ② 非 `[a-z0-9]` 压成单个 `-`（所以 `a---b`、`a  b` 都只会剩一个分隔符）；
  *   ③ 掐掉首尾的 `-`；
- *   ④ 太长截断到 30，太短（<2，比如纯中文）用固定兜底 `cnb-user`；
+ *   ④ 太长截断到 50，太短（<3，比如纯中文）用固定兜底 `cnb-user`；
  *   ⑤ 与 `taken` 里的名字撞了就加 `-code`，再撞加 `-code-2`、`-code-3`…（上限 9 次）。
  *
  * ⚠ 它只保证「合法」，不保证「没被别人占」：唯一知道的冲突来自调用方传进来的 `taken`，

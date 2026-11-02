@@ -23,9 +23,9 @@ function fakeResponse(status, body) {
   }
 }
 
-/** CNB 的组织 slug 规则：小写字母数字与 `-`，长度 2~30，首尾不能是 `-` */
+/** CNB 的组织 slug 规则：小写字母数字与 `-`，长度 3~50（实测自上游报错），首尾不能是 `-` */
 function assertLegalSlug(slug, label = "slug") {
-  assert.match(slug, /^[a-z0-9][a-z0-9-]{1,29}$/, `${label} 不合法：${JSON.stringify(slug)}`)
+  assert.match(slug, /^[a-z0-9][a-z0-9-]{2,49}$/, `${label} 不合法：${JSON.stringify(slug)}`)
   assert.ok(!slug.includes("--"), `${label} 出现了连续 -：${slug}`)
   assert.ok(!slug.startsWith("-") && !slug.endsWith("-"), `${label} 首尾不能是 -：${slug}`)
 }
@@ -50,16 +50,16 @@ test("suggestGroupPath：连续非法字符只留一个 -，首尾的 - 掐掉",
   for (const src of ["a---b", "__x__", "A  B"]) assertLegalSlug(suggestGroupPath(src), src)
 })
 
-test("suggestGroupPath：超长截到 30，中文/太短用兜底", () => {
+test("suggestGroupPath：超长截到 50，中文/太短用兜底", () => {
   const long = suggestGroupPath("A".repeat(80))
-  assert.equal(long.length, 30)
+  assert.equal(long.length, 50, "上游是 3~50（实测报错文案），不是我们原先推的 30")
   assertLegalSlug(long, "超长名字")
 
   // 纯中文昵称一个字符都留不下 → 固定兜底（不能让用户因为名字是中文就建不了组织）
   assert.equal(suggestGroupPath("张三"), "cnb-user")
   assert.equal(suggestGroupPath(""), "cnb-user")
   assert.equal(suggestGroupPath(undefined), "cnb-user")
-  // 只有一个字符也不够 2 位
+  // 只有一个字符也不够 3 位
   assert.equal(suggestGroupPath("x"), "cnb-user")
 })
 
@@ -67,10 +67,10 @@ test("suggestGroupPath：撞名加 -code，再撞加 -code-2", () => {
   assert.equal(suggestGroupPath("Tlaloc", { taken: ["tlaloc"] }), "tlaloc-code")
   assert.equal(suggestGroupPath("Tlaloc", { taken: ["Tlaloc", "TLALOC-CODE"] }), "tlaloc-code-2")
 
-  // 超长 + 撞名：后缀要挤在 30 以内
-  const base = "b".repeat(30)
+  // 超长 + 撞名：后缀要挤在 50 以内
+  const base = "b".repeat(50)
   const withTail = suggestGroupPath(base, { taken: [base] })
-  assert.ok(withTail.length <= 30, `加了后缀还是不能超过 30：${withTail.length}`)
+  assert.ok(withTail.length <= 50, `加了后缀还是不能超过 50：${withTail.length}`)
   assert.ok(withTail.endsWith("-code"), withTail)
   assertLegalSlug(withTail, "超长+撞名")
 })

@@ -51,6 +51,10 @@ export function normaliseOptions(raw) {
     },
     // 探测不到仓库时用来猜路径。默认 `code` —— 与 CNB 新建仓库的默认名一致。
     repoName: path(src.repoName) || "code",
+    // ⚠ 建组织**默认关**：一个根组织一年只能建 1 个，删掉还不退还
+    //   （真机实测 2026-11-03，`429 The root organization has reached its yearly creation limit`）。
+    //   一次登录替用户烧掉一整年的名额，不是插件该替他做的决定 —— 要自动建就显式写 true。
+    createOrg: src.createOrg === true,
   }
 }
 

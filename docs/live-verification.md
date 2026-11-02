@@ -639,3 +639,23 @@ case c（仓库路径 cnb/no-such-repo-live-probe）→ 上游 404 → 插件原
 而用户真正要修的是仓库路径。已改成 `502 upstream_error`（可换号、不搁置模型）。
 `scripts/live-verify.mjs` 的 case c 断言也跟着从「401 登录失效」改成「502 路径问题」
 —— 它原来记的是 csrf 没修对时的假象。
+
+#### ⑥ 组织 slug 的真实规则是 **3–50**，不是我们推的 2–30
+
+上游自己会把规则说出来 —— 往 `POST cnb.cool/groups` 发几种非法 body：
+
+```
+{path:"A"}      → 400 Organization name length is invalid (must be between 3 and 50 characters)
+{path:""}       → 400 The parameter path cannot be empty.
+{path:"新组织"}  → 400 Organization name cannot begin or end with a special character
+{}              → 400 The parameter path cannot be empty.
+```
+
+两件事：**body 是被解析的**（校验在配额之前），以及**长度是 3–50**。
+`GROUP_SLUG_MIN/MAX` 已从 2/30 改成 3/50，测试里的正则也跟着改。
+
+#### ⑦ 自动建组织这个开关，差点因为「选项被丢掉」变成永远关闭
+
+`normaliseOptions()` 是插件选项的白名单，`createOrg` 一开始没被加进去 ——
+于是 `options.createOrg === true` 永远是 `false`，「默认关闭」实际变成了「永远关闭」，
+而症状是**没有任何报错**。已补进白名单并加了测试（含「字符串 `"true"` 不算」）。
