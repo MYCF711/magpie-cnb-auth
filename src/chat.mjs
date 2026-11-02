@@ -280,13 +280,18 @@ export function buildCookieFetch({ getAuth, options }) {
     if (!response.ok || htmlInstead) {
       const body = await readBody(response)
       const csrfBlocked = /csrf/i.test(errorText(body))
+      const notFound = Number(response.status) === 404
       const detail = htmlInstead
         ? `上游返回了 HTML（${response.status}）：那是 Cloudflare / 网关页，不是业务错误体。` +
           `最常见的原因是登录态已过期；仓库路径当前是 ${repo}。`
         : csrfBlocked
           ? `CNB 拒绝了这次请求（${response.status} Blocked by CSRF）：补了 csrf 令牌仍然不过，` +
             `说明这条 CNBSESSION 已经失效，请重新登录。仓库路径当前是 ${repo}。`
-          : `CNB 上游 ${response.status}：${errorText(body)}`
+          : notFound
+            ? `CNB 上游 404：${errorText(body) || "Not Found"}。` +
+              `AI 端点是 /{org}/{repo}/-/ai/…，这个 404 通常是仓库路径不存在（当前 ${repo}）。` +
+              `换一个仓库：插件选项里填 repo=org/repo；留空就用公开仓库 cnb/docs。`
+            : `CNB 上游 ${response.status}：${errorText(body)}`
       const loginBroken = isLoginBroken(response.status, body)
       const status = statusForCookie(response.status, { htmlInstead, loginBroken })
       return errorResponse(
