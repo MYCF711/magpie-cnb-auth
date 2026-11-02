@@ -1,11 +1,15 @@
 // src/credential.mjs —— 「用户到底给了我什么？」+「这个账号现在能干什么？」
 //
-// magpie 有三条登录路（见 index.mjs 的 auth.methods），落下来的凭据形状只有两种：
+// magpie 有四条登录路（见 index.mjs 的 auth.methods），落下来的凭据形状只有两种：
 //
 //   访问令牌（PAT / `~/.cnb/token` 里的 access_token）  以 `cnb_at_` / `cnb_rt_` 开头，
 //                                                        90+ 字符，打的是 api.cnb.cool
 //   CNBSESSION（浏览器 Cookie）                          三段：数字.数字.<长 hex>，
 //                                                        打的是 cnb.cool 网页侧
+//
+// ⚠ 「浏览器网页登录」会**同时**带回上面两样：PAT 放 `auth.access`、CNBSESSION 放
+//   `metadata.session`。所以凭据种类不能由登录方式（`auth.type`）推断 ——
+//   见下面 `resolveAccount()` 里那段注释。
 //
 // ⚠ 粘贴方式（`type: "api"`）在 `authorize` 里拿不到用户在输入框里填的值 ——
 //   magpie 宿主只把 `prompts` 的答案作为 `inputs` 传进来（internal/plugin/host.js）。
@@ -169,7 +173,16 @@ export function resolveAccount(auth, options = {}) {
   const cached = raw ? credentialCache.get(raw) : null
   const meta = auth?.metadata && typeof auth.metadata === "object" ? auth.metadata : {}
 
-  const kind = cached?.kind || (auth?.type === "oauth" ? "pat" : meta.kind) || shapeKind(raw).kind
+  // ⚠ `kind` 只认三处，**不要按登录方式猜**：
+  //   ① 运行时识别过的缓存（真的打过接口）
+  //   ② 登录时写进 metadata 的（浏览器网页登录会把两样凭据一起带回来，只有它知道谁是谁）
+  //   ③ 凭据形状（`shapeKind()` 本来就分得清 pat / session）
+  //
+  //   这里曾经有一条 `(auth?.type === "oauth" ? "pat" : meta.kind)` —— 它把「受控浏览器
+  //   拿到的纯 CNBSESSION」强行判成 PAT（因为那条路也是 oauth 类型），后果是
+  //   `token = 那条 session`（打 api.cnb.cool 必然 401）、而 `session` 反而空着（跑不了模型）。
+  //   一半坏、一半好的错最难查，所以判定只留给「谁真的知道」。
+  const kind = cached?.kind || meta.kind || shapeKind(raw).kind
   // ⚠ 优先级：**显式选项 > 登录时探测到的**。反过来的话，用户在选项里改了 org / repo，
   //   缓存里那份旧值会一直赢 —— 表现是「改了设置没生效」。
   const org = String(options.org || cached?.org || meta.org || "").replace(/^\/+|\/+$/g, "")

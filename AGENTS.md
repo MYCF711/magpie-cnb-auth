@@ -80,6 +80,7 @@ PR 是 GitHub 对受保护分支的技术要求（直推报 `GH006`），批准�
 | 27 | **卡片上的账号名是一串看不懂的 ID**（`iam::00000000…:user:hw0000…`、`urn:…`、uuid），用户以为是「显示乱码」 | `accountId` 是**名字**，不是身份：手机号（`maskPhone` 对去掉国家码后 ≥11 位的号码打码 `138****8000`；短号返回空串不显示）→ 昵称/邮箱 → **空串**（宿主回退供应商名）。内部 ID 只进 `uid`。**URN 写进 `accountId` 极难改回** —— 续期返回值是合并、插件落盘又多保留旧值，所以续期路径也要重算一遍 | HOOKS 八的「`accountId` 是名字，`uid` 是身份」· `src/account-name.mjs` 的 `resolveAccount` |
 | 28 | 卡片标题写 `华为云 HUAWEI` 之后，`magpie plugin update` 报 `unrecognised dependency format: 华为云 HUAWEI` | `package.json.name` 同时是 bun 依赖键，**必须是 slug、不能有空格**；显示名写 `package.json.magpie.name`（可带空格），provider/registry 同步。旧安装按 UPDATING 的「旧版带空格依赖键」改键 + 目录 + lock，不用 rm+add | README「包名是 slug；显示名写 magpie.name」· UPDATING 迁移 |
 | 29 | 仓库里写了真手机号 / 邮箱 / 本机路径，把那次提交删掉就以为没事了 | **历史里那份还在**：`git log -p`、下载任意旧 commit 都能看到。提交前跑 `node scripts/privacy-scan.mjs`（0 = 干净）；已经 push 过的要 `git filter-repo --replace-text` 重写全部历史再强推，作者邮箱顺手换 `…@users.noreply.github.com`（`git log` 会聚合作者，真邮箱=公开 QQ 号/手机号）。**改前改后 `git rev-parse HEAD^{tree}` 必须一致** —— 一致才说明「用户装到的东西没变」，只是 SHA 变了 | 本文件「八、脱敏」 |
+| 30 | **登录后额度有数、模型通道却是空的**；或者反过来，一查额度就 401 | **凭据种类只由三处决定**：运行时识别过的缓存 → `metadata.kind` → 凭据形状（`shapeKind()`）。不要按登录方式（`auth.type`）猜 —— 「浏览器网页登录」一次带回两样凭据（PAT 放 `access`、CNBSESSION 放 `metadata.session`），按 oauth 类型判成 PAT 会让一半好、一半坏 | [`docs/internals.md`](./docs/internals.md) 2.4 · `src/credential.mjs` 的 `resolveAccount` |
 
 ---
 
@@ -201,6 +202,8 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`src/vision-clock.mjs`](./src/vision-clock.mjs) | `readVisionModel` / `decideDegFromImage` / `clockToDeg` / `clockSpread` | 用用户自己在 magpie 里选的识图模型判「主体朝几点」；两个判官并行 + 分歧阈值；`max_tokens` 是给推理留的（400 会饿死答案） |
 | [`src/local-browser.mjs`](./src/local-browser.mjs) | `readLocalCreds` / `credsNear` / `leveldbText` | 用户在自己浏览器里登录过时，直接读 localStorage 的 leveldb —— 不开窗、不弹浏览器；跨 origin 必须截断，否则 A 站 jwt 会配到 B 站 org |
 | [`src/browser-login.mjs`](./src/browser-login.mjs) | `browserCandidates` / `findBrowser` / `chromiumLogin` / `selectCookies` | 需要用户在网页里登录时，开一个一次性 Chromium profile 从 CDP 取 Cookie；国产浏览器也要覆盖，Windows 注册表 App Paths 优先 |
+| [`src/web-login.mjs`](./src/web-login.mjs) | `loginViaBrowser` | 第 4 条登录路：同一个窗口里并行跑设备码与 CDP 抓 Cookie，一次拿到「额度 + 通道」；四种结局的分账写在文件头 |
+| [`src/org.mjs`](./src/org.mjs) | `createGroupWithSession` / `suggestGroupPath` / `orgHint` | 组织 slug 生成 + 用网页登录态建组织（**未真机验证**，返回 `{ ok, status, body }` 绝不抛）；读钩子只指路、不建 |
 | [`src/tempmail-client.mjs`](./src/tempmail-client.mjs) | `createTempMailbox` / `waitTempCode` | 邮箱验证码自动登录的一次性地址；域名有黑名单（`maxxspace.com` 被 magicrew 拒），换厂商先用真实请求确认 |
 | [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 语义锁（含额度窗口 / accountId 规则） | `check.mjs` 查不到的那部分，只有它能拦 |
 | [`tests/mount.test.mjs`](./tests/mount.test.mjs) | 入口唯一函数导出 / 九钩子 / config 模型 / loader / usage 形状 | 模块测试全绿也拦不住「index 改坏了」 |

@@ -75,18 +75,28 @@ test("config() 未登录也声明了模型，且 modalities / 五个 input 布�
   assert.equal(models["deepseek-v4.1-flash"].capabilities.input.image, false)
 })
 
-test("三条登录方式：设备码 / 本机 / 粘贴，且 authorize 都是 async", async () => {
+test("四条登录方式：设备码 / 本机 / 受控浏览器 / 粘贴，且 authorize 都是 async", async () => {
   const plugin = await CnbAuthPlugin({ client: {} })
   const methods = plugin.auth.methods
-  assert.equal(methods.length, 3, "三条路：设备码（可加账号）、本机 cnb-cli、粘贴凭证")
+  assert.equal(methods.length, 4, "四条路：设备码（可加账号）、本机 cnb-cli、受控浏览器（额度+通道）、粘贴凭证")
 
-  const [device, local, paste] = methods
+  const [device, local, browser, paste] = methods
   assert.equal(device.type, "oauth")
   assert.equal(typeof device.authorize, "function")
   assert.equal(device.authorize.constructor.name, "AsyncFunction")
 
   assert.equal(local.type, "oauth")
   assert.equal(typeof local.authorize, "function")
+
+  // 受控浏览器那条：窗口由插件自己开，所以必须是 opened: true（HOOKS 陷阱 3），
+  // 而且 authorize() 只能立刻返回 —— 开窗与等用户都在 callback 里。
+  assert.equal(browser.type, "oauth")
+  assert.equal(typeof browser.authorize, "function")
+  const start = await browser.authorize()
+  assert.equal(start.opened, true, "窗口由插件自己开，别再让宿主开一个")
+  assert.equal(start.method, "auto")
+  assert.equal(typeof start.callback, "function")
+  assert.match(String(start.url), /^https:\/\/cnb\.cool\//, "url 必须是 CNB 的登录/确认入口")
 
   // ⚠ 粘贴方式绝对不能带 authorize：magpie 只把 prompts 的答案传进去，
   //   输入框里的值拿不到，加了只会读到 undefined。
@@ -146,6 +156,17 @@ test("usage() 未登录时给出 error 而不是伪造 0", async () => {
   const anonymous = await plugin.auth.usage(async () => null, { id: _internal.PROVIDER })
   assert.match(String(anonymous.error), /未登录/)
   assert.deepEqual(anonymous.windows, [])
+})
+
+test("usage()：没有组织 + 只有网页登录态 → 指路「浏览器网页登录」，且读钩子里绝不建组织", async () => {
+  const plugin = await CnbAuthPlugin({ client: {} })
+  const result = await plugin.auth.usage(async () => ({ type: "api", key: SESSION }), { id: _internal.PROVIDER })
+
+  assert.match(String(result.error), /还没有组织/)
+  assert.match(String(result.error), /浏览器网页登录/)
+  assert.match(String(result.error), /顺带建组织/, "提示要指向那条真的能建组织的登录路")
+  assert.match(String(result.error), /访问令牌/, "只有 session 的账号还要说清额度差一个 PAT")
+  assert.deepEqual(result.windows, [])
 })
 
 test("checkin()：没配 claim.url 就是 inactive（CNB 没有每日签到）", async () => {

@@ -488,3 +488,28 @@ AI 端点也挂在 /{org}/{repo} 下。先到 https://cnb.cool/new/groups 建一
 - 真实**额度读数**与**真实 SSE 消息**仍然没有：那需要一条有组织、有额度、且手上有
   CNBSESSION 的账号。这一节只证明「宿主这条链路是通的、错误是说人话的」。
 - 隔离目录里装的是**本机路径**，不是 `github:` / npm spec —— 分发渠道的安装方式不在此列。
+
+### 8.6 受控浏览器取 Cookie 的管道（2026-11-02 实测）
+
+第 4 条登录路「浏览器网页登录」依赖 `src/browser-login.mjs` 的那套「临时 profile + CDP」。
+**管道本身是真的跑通过的**（不是只有单测）：
+
+```
+findBrowser() → msedge  C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+spawn(--remote-debugging-port, --user-data-dir=<临时目录>) → 连上 /json/list
+Network.enable + Network.getAllCookies → 11 条 Cookie，其中 cnb.cool 的 1 条
+  cnb.cool | csrfkey | 长度 32
+匿名访问有没有 CNBSESSION：没有（符合预期 —— 它只在登录后才下发）
+```
+
+也就是说：**窗口能开、CDP 能连、Cookie 能读**；剩下没被证明的只有「用户在窗口里登录之后，
+CNBSESSION 会不会如期出现」——那一步必须要人，脚本没法代替。
+
+另外两条顺带确认的事实：
+
+- **直接读日常浏览器的 Cookie 库行不通**：Edge 正在运行时它的 `Network/Cookies`
+  被独占锁定（`cp` 报 `Device or resource busy`、`node:sqlite` 报 `unable to open database file`）。
+  所以「不开窗从本机浏览器偷 Cookie」这条路在浏览器开着的时候是死的 —— 受控窗口才是可靠的那条。
+- **`POST https://api.cnb.cool/groups` 认不认 Cookie，现在还证不了**：带假 Cookie 与完全不带凭据
+  返回的是一模一样的 `401 {"errcode":16,"errmsg":"The task will not run because the user is not logged in."}`。
+  `src/org.mjs` 的实现按「形状对、鉴权未知」写，第一次真机跑完请回来更新这一条。

@@ -86,19 +86,20 @@ function safeIso(value) {
 /**
  * 通道说人话。用在「AI 通道」那一行 —— 别等用户发消息才炸。
  *
- * ⚠ 「浏览器授权登录 / 本机 cnb-cli / 粘贴访问令牌」这三条路拿到的都是**访问令牌（PAT）**，
+ * ⚠ 四条登录路里，「设备码 / 本机 cnb-cli / 粘贴访问令牌」这三条拿到的都是**访问令牌（PAT）**，
  *   而 PAT 调不了 AI 端点（上游一律 403 [NO_RIGHT]）。所以要跑模型必须再补一条
- *   **CNBSESSION**（或配 relay）。这一行就是提前把这件事说清楚的地方 ——
- *   登录成功 ≠ 能聊天，这个差别必须出现在卡片上，不能只写在 README 里。
+ *   **CNBSESSION**（或配 relay）—— 或者一开始就走第 4 条「浏览器网页登录」，它一次给两样。
+ *   这一行就是提前把这件事说清楚的地方：登录成功 ≠ 能聊天，这个差别必须出现在卡片上，
+ *   不能只写在 README 里。
  */
 export function describeTransport(transport, { hasSession = false } = {}) {
   if (transport === "relay") return "中继机（支持 tools）"
   if (transport === "cookie") {
     return hasSession
       ? "Cookie 直连（可用）；要 tools 请改走 relay"
-      : "只有访问令牌 —— 跑不了模型。点「粘贴访问令牌」把浏览器里的 CNBSESSION 粘进来，或在选项里配 relay"
+      : "只有访问令牌 —— 跑不了模型。重登一次「浏览器网页登录」就能连 CNBSESSION 一起拿到；也可以点「粘贴访问令牌」把浏览器里的 CNBSESSION 粘进来，或在选项里配 relay"
   }
-  return "没有可用凭据：先登录（浏览器授权 / 粘贴访问令牌）"
+  return "没有可用凭据：先登录（浏览器网页登录 / 浏览器授权 / 粘贴访问令牌）"
 }
 
 function credits(n) {

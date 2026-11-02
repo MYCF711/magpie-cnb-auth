@@ -29,9 +29,9 @@
 
 ---
 
-## 2. 登录：三条路，各自解决不同问题
+## 2. 登录：四条路，各自解决不同问题
 
-### 2.1 浏览器设备码（默认，唯一能加账号的路）
+### 2.1 浏览器设备码（默认那条；也能反复加账号）
 
 RFC 8628，参数与 `cnb-cli` 的 `cnb login` 完全一致：
 
@@ -95,6 +95,57 @@ magpie 的 `api` 登录方式有一个硬约束：**插件在 `authorize` 里拿
 顺序是**按形状先走**，不先试错：拿 CNBSESSION 去打 `api.cnb.cool` 必然 401，
 白跑一次还多一条超时风险。只有「两种都不像」时才按「先当令牌试一次」处理，
 失败后给出可照做的指引（含生成地址），而不是只说「无效」。
+
+### 2.4 浏览器网页登录（第 4 条路：一次拿额度 + 通道）
+
+前面三条路拿到的都是访问令牌，而 AI 端点只吃 `CNBSESSION`。所以要「一个账号既有额度、
+又能跑模型」，必须在**一次登录**里同时拿到两样凭据。做法是把两件事塞进同一个窗口并行跑：
+
+```
+POST /oauth2/device/auth             → device_code + verification_uri_complete（带 user_code）
+开一个受控 Chromium（一次性 profile） → 直接打开 verification_uri_complete
+   用户在窗口里登录 cnb.cool          → CNBSESSION 落进这个临时 profile
+   用户点页面上的「确认授权」          → 设备码轮询拿到 access_token
+CDP Network.getAllCookies            → 收下 CNBSESSION
+```
+
+两个条件**都满足**才收工。[`chromiumLogin({ waitFor })`](../src/browser-login.mjs) 就是那个
+「cookie 齐了，还要等另一件事完成」的钩子：只等 cookie 的话，用户还没点「确认授权」窗口就被
+关掉、PAT 永远拿不到；反过来只等 token 的话，cookie 可能还没落盘。判定抽成了纯函数
+`readyToFinish()` —— 它最容易写成 `||`（等于没等），而真的关窗验一遍要 GUI，跑不进单测。
+
+分账规则只有一种正确写法：
+
+| 凭据 | 放哪 | 谁要用它 |
+|---|---|---|
+| 访问令牌（PAT） | `auth.access` | 额度 / 组织 / 仓库（`api.cnb.cool`） |
+| CNBSESSION | `metadata.session` | AI 通道（`cnb.cool`） |
+| csrfkey | `metadata.csrfkey` | 网页侧请求头 `Csrftoken` |
+
+反过来放不只是「顺序问题」：`resolveAccount()` 会拿 session 当 PAT 去查额度（必然 401），
+而 `session` 空着 → 模型通道是空的。两种都只坏一半，是最难查的那类错。所以 `kind` 的判定
+改成**只看三处**：运行时识别过的缓存 → `metadata.kind` → 凭据形状（`shapeKind()`），
+不再按 `auth.type === "oauth"` 猜 —— 浏览器登录也是 oauth 类型，猜必错。
+
+**为什么不能直接读用户自己浏览器的 Cookie 库**：浏览器在跑的时候库文件被独占锁定，
+`cp` 与 `node:sqlite` 都打不开（2026-11-02 实测，Edge 正在运行）。只剩「开一个自己的窗口」。
+
+**没组织就顺手建一个。** CNB 的 AI Credit 按组织发放、AI 端点也挂在 `/{org}/{repo}` 下，
+而全新账号的 `/user/groups` 是空的（实测 2026-11-02）。设备码拿到的 PAT 建不了组织
+（`cnb_cli` 申请不到 `group-manage:rw`，实测 `invalid_scope`），网页登录态可能可以：
+`POST https://api.cnb.cool/groups`（`{ path, description }`，需要 `group-manage:rw`）。
+slug 由 [`suggestGroupPath()`](../src/org.mjs) 从昵称生成（`Tlaloc` → `tlaloc`、
+`cnb.dI2DzHg0QHA` → `di2dzhg0qha`、纯中文昵称兜底 `cnb-user`），撞名加 `-code`。
+
+⚠ **这一段没有真机证据。** 请求形状按 `https://api.cnb.cool/swagger.json` 的 `POST /groups`
+写（`{ path, description }`，需要 `group-manage:rw`），但**这个端点认不认 Cookie 未知**。
+实现上因此有三条约束：
+
+1. [`createGroupWithSession()`](../src/org.mjs) 返回 `{ ok, status, body }`，**绝不抛**；
+2. 只在用户**亲手点**的那条登录路里试**一次**，失败不重试、也不把登录判失败 ——
+   `metadata.orgAttempt` 记下 status，卡片按它说话（`orgHint()`）；
+3. `usage()` 这类**读钩子绝不建组织**：它只把「点『浏览器网页登录』可以顺带建组织」写进提示。
+   读钩子有副作用，是比「功能没做」更贵的错。
 
 ---
 
@@ -272,3 +323,12 @@ POST https://cnb.cool/{org}/{repo}/-/ai/chat/completions
    `invite` / `rotation-captcha` / `tool-schema` / `request-rewrite` / `vision-clock` /
    `tempmail-client` / `store` / `model-context` / `local-browser`）。CNB 这个供应商用不到它们，
    但它们是脚手架的一致契约、并有各自的测试。**将来接别的站点时按需用，别以为删除是「清理」。**
+   （`browser-login` 现在有调用方了：`src/web-login.mjs` 的第 4 条登录路。）
+9. **「浏览器网页登录」没有真机证据 —— 只有离线测试。** 本机 Edge 正在运行、Cookie 库被独占
+   锁定，也就没有可用的 CNBSESSION 来跑一遍完整流程（见第 2.4 节）。**验证过的**：
+   `waitFor` 的判定语义（`readyToFinish()` / `pollCookies()` 的离线测试）、四种结局的分账
+   （注入假实现跑通，见 `tests/web-login.test.mjs`）、`POST /groups` 的请求形状
+   （见 `tests/org.test.mjs`）。**没验证的**：① 受控窗口里 cnb.cool 的登录页会不会被风控拦；
+   ② 登录完成后页面是否会自动回到带 `user_code` 的确认页（不回的话用户只拿到 session 那一半）；
+   ③ cookie 鉴权能不能过 `POST /groups`；④ 建出来的组织能不能立刻查到额度和仓库。
+   这四件事等有 CNBSESSION 的账号跑一次 `magpie plugin login cnb`（选第 3 条）就能补上。

@@ -750,17 +750,19 @@ async function checkHooks() {
   c.expect(modelIds.length > 0, "config({}) 之后模型表是空的（铁律 1）")
   c.eq(declared?.npm, "@ai-sdk/openai-compatible", "SDK 形状")
 
-  // 三条登录方式
+  // 四条登录方式
   const methods = plugin.auth?.methods
-  c.expect(Array.isArray(methods) && methods.length === 3, `auth.methods 应当 3 条，实际 ${methods?.length}`)
-  const [device, local, paste] = methods || []
+  c.expect(Array.isArray(methods) && methods.length === 4, `auth.methods 应当 4 条，实际 ${methods?.length}`)
+  const [device, local, browser, paste] = methods || []
   c.eq(device?.type, "oauth", "第 1 条登录方式类型")
   c.eq(typeof device?.authorize, "function", "第 1 条登录方式要有 authorize")
   c.eq(local?.type, "oauth", "第 2 条登录方式类型")
   c.eq(typeof local?.authorize, "function", "第 2 条登录方式要有 authorize")
-  c.eq(paste?.type, "api", "第 3 条登录方式类型")
-  c.eq(paste?.authorize, undefined, "第 3 条（粘贴）不许有 authorize —— 输入框的值进不来")
-  c.eq(paste?.prompts, undefined, "第 3 条（粘贴）不许有 prompts")
+  c.eq(browser?.type, "oauth", "第 3 条（浏览器网页登录）类型")
+  c.eq(typeof browser?.authorize, "function", "第 3 条登录方式要有 authorize")
+  c.eq(paste?.type, "api", "第 4 条登录方式类型")
+  c.eq(paste?.authorize, undefined, "第 4 条（粘贴）不许有 authorize —— 输入框的值进不来")
+  c.eq(paste?.prompts, undefined, "第 4 条（粘贴）不许有 prompts")
   c.expect(typeof paste?.placeholder === "string" && paste.placeholder.length > 0, "粘贴方式要有 placeholder")
   c.note(`auth.methods → [${methods?.map((m) => `${m.type}:${m.label ?? m.placeholder?.slice(0, 8) ?? ""}`).join(" | ")}]`)
 
@@ -792,6 +794,20 @@ async function checkHooks() {
     c.expect(elapsed < 2_000, `第 2 条 authorize() 用了 ${elapsed}ms`)
     c.eq(HITS.length, 0, "第 2 条 authorize() 只读本机文件，不许出网")
     c.eq(typeof start?.callback, "function", "第 2 条要有 callback")
+  }
+
+  // 第 3 条（浏览器网页登录）只报计划：设备码、开窗、等用户全在 callback 里。
+  if (typeof browser?.authorize === "function") {
+    HITS.length = 0
+    const startedAt = Date.now()
+    const start = await browser.authorize()
+    const elapsed = Date.now() - startedAt
+    c.note(`第 3 条 authorize() → ${elapsed}ms · 出网 ${HITS.length} 次`)
+    c.expect(elapsed < 2_000, `第 3 条 authorize() 用了 ${elapsed}ms（必须 < 2000ms）`)
+    c.eq(HITS.length, 0, "第 3 条 authorize() 此时还不许出网/开窗（都在 callback 里）")
+    c.eq(start?.opened, true, "第 3 条必须是 opened: true —— 窗口由插件自己开（HOOKS 陷阱 3）")
+    c.eq(start?.method, "auto", "第 3 条 authorize() 的 method")
+    c.eq(typeof start?.callback, "function", "第 3 条要有 callback")
   }
 
   return c

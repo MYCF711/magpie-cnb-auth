@@ -48,7 +48,14 @@ export function registryAppPath(exe) {
       `SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`,
     ]) {
       try {
-        const out = execFileSync("reg", ["query", `${root}\\${tail}`, "/ve"], { encoding: "utf8", timeout: 5000 })
+        // ⚠ 必须显式给 stdio：默认子进程 stderr 是**继承**的，而 `reg query` 查不到项时
+        //   会往 stderr 写「错误: 系统找不到指定的注册表项或值。」—— 实测一次 findBrowser()
+        //   能刷出 20 多行中文噪声，直接进 magpie 的插件日志。stdout 仍要 pipe（要读 REG_SZ）。
+        const out = execFileSync("reg", ["query", `${root}\\${tail}`, "/ve"], {
+          encoding: "utf8",
+          timeout: 5000,
+          stdio: ["ignore", "pipe", "ignore"],
+        })
         const line = out.split("\n").find((l) => /REG_SZ/i.test(l))
         const path = line?.split("REG_SZ")[1]?.trim()
         if (path && existsSync(path)) return path
@@ -209,17 +216,76 @@ async function cdpCookies(pageWsUrl) {
 }
 
 /**
+ * 「现在可以收工了吗？」
+ *
+ * 默认只看「cookie 齐了没有」；给了 `waitFor` 就变成「cookie 齐了**且** `waitFor` 说可以」。
+ *
+ * ⚠ 抽成纯函数是为了能离线测：真的要验它得开一个 GUI 浏览器，跑不进单测。
+ *   而「cookie 齐了也不算完」恰恰是最容易写反的一条（写成 `||` 就等于没等）。
+ *
+ * ⚠ `waitFor` 自己抛就让它冒泡 —— 那是调用方的 bug 或用户取消，不该被吞成「继续等」。
+ *
+ * @param {{cookieNames?:string[], header?:string, found?:Record<string,string>, waitFor?:(found:Record<string,string>)=>Promise<boolean>|boolean}} [o]
+ * @returns {Promise<boolean>}
+ */
+export async function readyToFinish({ cookieNames = [], header = "", found = {}, waitFor } = {}) {
+  // cookieNames 为空表示「随便有个非空 cookie 就算」（与改动前的语义一致）
+  const cookiesOk = cookieNames.length === 0 ? header.length > 0 : cookieNames.every((n) => found[n])
+  if (!cookiesOk) return false
+  if (typeof waitFor !== "function") return true
+  return Boolean(await waitFor(found))
+}
+
+/**
+ * 一轮一轮读到「可以收工」为止。
+ *
+ * 抽出来只为一件事：`chromiumLogin` 的其余部分（找端口 / 开窗 / 关窗 / 删 profile）必须真起
+ * 浏览器，而这一段用假的 `readCookies` 就能测 —— 包括 `waitFor` 的语义。
+ *
+ * @param {object} o
+ * @param {() => Promise<object[]>} o.readCookies 读一次 cookie 列表
+ * @param {string[]} [o.cookieNames]
+ * @param {number} [o.deadline] 绝对截止时间（毫秒时间戳）
+ * @param {number} [o.stepMs] 每轮间隔，默认 1 秒
+ * @param {AbortSignal} [o.signal]
+ * @param {(found:Record<string,string>)=>Promise<boolean>|boolean} [o.waitFor]
+ * @returns {Promise<{cookie:string, found:Record<string,string>}>}
+ */
+export async function pollCookies({
+  readCookies,
+  cookieNames = [],
+  deadline = Date.now() + 5 * 60_000,
+  stepMs = 1000,
+  signal,
+  waitFor,
+} = {}) {
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("登录已取消")
+    // 读失败（CDP 断线、页面切换）当成「这一轮没有」，与改动前一致
+    const cookies = await Promise.resolve().then(readCookies).catch(() => [])
+    const { header, found } = selectCookies(cookies, cookieNames)
+    if (await readyToFinish({ cookieNames, header, found, waitFor })) return { cookie: header, found }
+    await new Promise((r) => setTimeout(r, stepMs))
+  }
+  throw new Error(`登录超时：没有拿到 ${cookieNames.join(" / ")}`)
+}
+
+/**
  * 打开受控浏览器，等用户登录，返回需要的 Cookie。
  *
  * @param {object} o
  * @param {{name:string,path:string}} o.browser findBrowser() 的返回值
  * @param {string} o.url 登录页
  * @param {string[]} [o.cookieNames] 必须拿到的 cookie 名
- * @param {number} [o.timeoutMs] 默认 5 分钟
+ * @param {number} [o.timeoutMs] 默认 5 分钟（从开窗算起，含等调试端口的时间）
  * @param {AbortSignal} [o.signal]
+ * @param {(found:Record<string,string>) => Promise<boolean>|boolean} [o.waitFor]
+ *   给「抓 Cookie 的同时还要等另一件事完成」的调用方用 —— 例如同一个窗口里还要走
+ *   OAuth 设备码，得等用户点完「确认授权」。返回 false 就继续等（1 秒一轮），
+ *   直到它返回 true 或超时/取消。传 `undefined` 时行为与以前完全一致：cookie 齐了就返回。
  * @returns {Promise<{cookie:string, found:Record<string,string>, browser:string}>}
  */
-export async function chromiumLogin({ browser, url, cookieNames = [], timeoutMs = 5 * 60_000, signal }) {
+export async function chromiumLogin({ browser, url, cookieNames = [], timeoutMs = 5 * 60_000, signal, waitFor }) {
   if (!browser?.path) throw new Error("没有可用的 Chromium 浏览器")
   const profile = mkdtempSync(join(tmpdir(), "magpie-login-"))
   const port = await freePort()
@@ -251,15 +317,16 @@ export async function chromiumLogin({ browser, url, cookieNames = [], timeoutMs 
     }
     if (!pageWs) throw new Error("受控浏览器没有打开调试端口（浏览器可能吞掉了 --remote-debugging-port）")
 
-    while (Date.now() < deadline) {
-      if (signal?.aborted) throw new Error("登录已取消")
-      const cookies = await cdpCookies(pageWs).catch(() => [])
-      const { header, found } = selectCookies(cookies, cookieNames)
-      const ok = cookieNames.length === 0 ? header.length > 0 : cookieNames.every((n) => found[n])
-      if (ok) return { cookie: header, found, browser: browser.name }
-      await new Promise((r) => setTimeout(r, 1000))
-    }
-    throw new Error(`登录超时：没有拿到 ${cookieNames.join(" / ")}`)
+    // ⚠ 轮询沿用同一个 deadline：等调试端口的那几十秒也算进 `timeoutMs` 里，
+    //   否则「开窗」和「等 cookie」各等 5 分钟，用户会干等 10 分钟。
+    const { cookie, found } = await pollCookies({
+      readCookies: () => cdpCookies(pageWs),
+      cookieNames,
+      deadline,
+      signal,
+      waitFor,
+    })
+    return { cookie, found, browser: browser.name }
   } finally {
     cleanup()
   }

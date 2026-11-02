@@ -7,7 +7,7 @@
 // 九项清单
 // ─────────────────────────────────────────────────────────────────────
 //   ① config(cfg)                       声明 provider + 静态模型表
-//   ② auth.methods[].authorize()        登录（三条路：设备码 / 本机 cnb-cli / 粘贴）
+//   ② auth.methods[].authorize()        登录（四条路：设备码 / 本机 cnb-cli / 受控浏览器 / 粘贴）
 //   ③ auth.refresh(auth, provider)      续期（OAuth refresh_token）
 //   ④ auth.loader(getAuth, provider)    请求接管（cookie 直连 或 relay 中继）
 //   ⑤ auth.usage(getAuth, provider)     额度 → 卡片进度条（当月 AI Credit）
@@ -31,6 +31,14 @@
 //     403 {"errcode":403,"errmsg":"[NO_RIGHT]OpenAPI only allowed in pipeline"}
 //   · 跑模型只有两条路：CNBSESSION（网页登录态，不支持 tools）或自建 relay（支持 tools）
 //   · 所有请求必须带 User-Agent，否则 Cloudflare 回 403 Error 1010
+//
+// ─────────────────────────────────────────────────────────────────────
+// 为什么有两条「浏览器」登录
+// ─────────────────────────────────────────────────────────────────────
+//   设备码（方式一）只拿得到 PAT：额度能查，模型打不了。
+//   网页登录（方式三）开一个受控浏览器窗口，同时收下 CNBSESSION（跑模型）与 PAT（查额度），
+//   账号没组织的话还会顺手建一个 —— 也就是「一次登录就齐活」。
+//   它要多一个窗口、多一次「确认授权」，所以没有替换掉设备码。
 
 import {
   BASE,
@@ -48,6 +56,9 @@ import { createRefreshLock } from "./src/refresh-lock.mjs"
 import { createUsageCache } from "./src/usage-cache.mjs"
 import { normaliseOptions } from "./src/options.mjs"
 import { loginViaDevice, refreshAccessToken } from "./src/device.mjs"
+import { CODES } from "./src/http.mjs"
+import { loginViaBrowser } from "./src/web-login.mjs"
+import { orgHint } from "./src/org.mjs"
 import { fetchTopGroups, fetchUser, listRepos } from "./src/api.mjs"
 import {
   accountNameOf,
@@ -173,7 +184,7 @@ export const CnbAuthPlugin = async (_ctx, rawOptions) => {
       maxConcurrency: 4,
       refreshLead: REFRESH_LEAD_MS,
 
-      // ═══ ② 登录：三条路 ═══════════════════════════════════════════
+      // ═══ ② 登录：四条路 ═══════════════════════════════════════════
       methods: [
         // ── 方式一：浏览器授权（OAuth Device Flow）—— 想加多个账号就走这条 ──
         {
@@ -209,7 +220,43 @@ export const CnbAuthPlugin = async (_ctx, rawOptions) => {
           },
         },
 
-        // ── 方式三：粘贴凭证（PAT 或 CNBSESSION，运行时自己认）──
+        // ── 方式三：浏览器网页登录 —— 一次拿到「额度」+「通道」──
+        //
+        // 为什么要多这一条：上面两条拿到的都是 PAT（额度能查、模型打不了）。这条会开一个
+        // **受控浏览器窗口**（一次性 profile，不碰用户日常浏览器），用户在里面登录 cnb.cool
+        // 再点一次「确认授权」，插件就同时收下 CNBSESSION（跑模型）与访问令牌（查额度）。
+        // 账号还没有组织的话，会顺手建一个 —— 建组织要的正是网页登录态（PAT 申请不到
+        // `group-manage:rw`，实测 invalid_scope）。
+        //
+        // ⚠ `authorize()` 必须**立刻返回**（铁律 2）：设备码、开窗、等用户全在 callback 里。
+        //   这里只是报一个「马上要做什么」，不能有任何 await。
+        // ⚠ `opened: true`：窗口是插件自己开的，再让宿主开一次用户会看到两个窗口（HOOKS 陷阱 3）。
+        // ⚠ URL 那一栏是给宿主/CLI 显示的兜底值，真正的确认页要等 callback 里领到设备码之后
+        //   才拼得出来（带 user_code），所以这里只放固定的确认入口。
+        {
+          type: "oauth",
+          label: "浏览器网页登录（一次拿到额度 + 通道，没组织会顺手建一个）",
+          async authorize() {
+            return {
+              url: ROUTES.deviceVerify,
+              instructions:
+                "插件会自己开一个受控浏览器窗口：先在窗口里登录 cnb.cool，再点页面上的「确认授权」，" +
+                "然后**别关窗口**，等它自己收工。这样一次就能同时拿到网页登录态（跑模型）与访问令牌（查额度）；" +
+                "账号还没有组织的话，会顺手建一个。",
+              method: "auto",
+              opened: true,
+              async callback() {
+                try {
+                  return await loginViaBrowser(options)
+                } catch (error) {
+                  return { type: "failed", error: String(error?.message || error).slice(0, 400) }
+                }
+              },
+            }
+          },
+        },
+
+        // ── 方式四：粘贴凭证（PAT 或 CNBSESSION，运行时自己认）──
         //
         // ⚠ 这里**绝对不能**加 authorize，也不要加 prompts：
         //   magpie 的 apiKey() 只把 prompts 的答案作为 inputs 传给 authorize
@@ -266,7 +313,18 @@ export const CnbAuthPlugin = async (_ctx, rawOptions) => {
           })
         } catch (error) {
           // 上游失败 → 让卡片显示原因。抛出去 magpie 只会记成「读取失败」，用户看不到原因。
-          return { error: String(error?.message ?? error), windows: [], ...(error?.signIn ? { signIn: error.signIn } : {}) }
+          //
+          // ⚠ 「没有组织 + 这条账号有网页登录态」这一种要换成**带路**的提示：
+          //   额度接口只会回「还没有组织」或「额度需要访问令牌」，而这两件事都能被
+          //   「浏览器网页登录」一次解决（它同时收 CNBSESSION 与 PAT）。
+          //   ⚠ 读钩子里绝不自动建组织 —— 那是对外可见的动作，只允许在用户亲手点的
+          //   登录路里做一次（见 src/org.mjs 文件头）。
+          //
+          //   只在「确实缺凭据 / 缺组织」这两种错误上替换文案：网络抖了、上游 5xx 也换掉的话，
+          //   用户会拿着一个组织提示去查一个根本不存在的组织问题。
+          const credentialish = error?.code === CODES.signInRequired || error?.code === CODES.invalidRequest
+          const hint = credentialish ? orgHint(resolveAccount(auth, options), auth) : ""
+          return { error: hint || String(error?.message ?? error), windows: [], ...(error?.signIn ? { signIn: error.signIn } : {}) }
         }
 
         const account = resolveAccount(auth, options)
