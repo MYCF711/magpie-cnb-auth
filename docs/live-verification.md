@@ -693,3 +693,29 @@ profile 目录还在吗: 已删除 ✅
 顺带修了一个残留问题：`cleanup()` 在 `finally` 里，但进程被硬杀（`taskkill` / `timeout`）时
 `finally` 不会执行，临时 profile 会一直堆着 —— 实测堆了 4 个。现在每次开窗前会
 `readdirSync(tmpdir())` 扫一遍，**只删超过 6 小时的** `magpie-login-*`。
+
+### 8.11 额度这件事的三次实测：没组织查不到，有组织也没看到扣减
+
+**① 没组织时，「额度」不是一个数字，是「查不到」。**
+额度是**按组织**发的：`/{org}/-/charge/quota`。没有组织就没有这个 org slug，
+接口无从调用；`GET https://cnb.cool/user/quota` 只回 `{"root_org":{"allow_create_new":…}}`
+（建组资格），**不带任何 AI Credit 数字**。所以卡片上写的是「还没有组织」，
+而不是 0 —— 这两件事不一样。
+
+**② 但没组织照样能跑模型。** `POST https://cnb.cool/cnb/docs/-/ai/chat/completions`
+（公开仓库）→ 200 + 正常 SSE。额度只影响卡片那一行。
+
+**③ 真建了组织之后，调用却没看到扣减。** 建完 `moyucangfeng` 并确认它有
+`credit_in_milli: {total: 500000, free: 500000}`（500 credits/月）后，做了三次真实调用
+（含一次打**自有仓库** `moyucangfeng/code`，避免「是不是记在别人的组织上」这个解释）：
+
+```
+调用前 credit_in_milli = 0
+调 cnb/docs                → 200, total_tokens 19  → 调用后 0
+调 moyucangfeng/code       → 200, total_tokens 13  → 调用后 0
+等 60 秒再看               → quota.free 仍 500000, volume 仍 0
+```
+
+也就是说：**在我这次观测的时间窗里，AI 调用没有在 `credit_in_milli` 上留下任何痕迹**。
+三种可能我分不出来：计费按天/延迟聚合、这个模型档位不扣 credit、或者扣的是别的计数器。
+**没有证据说它是免费**，只能说「我没观察到扣减」—— 真要确认，得隔一天再读一次 `volume`。
