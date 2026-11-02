@@ -2,7 +2,7 @@
 
 把一个 **CNB（cnb.cool）** 账号变成 magpie 里的一个供应商：点一次「浏览器网页登录」，
 插件开的受控窗口里登一次、确认一次授权，当月 AI Credit 与认证徽章上卡片的同时，
-**CNBSESSION**（跑模型用的网页登录态）也一起收下了 —— DeepSeek / GLM / Kimi 当场能在 agent 里跑。
+**CNBSESSION**（跑模型用的网页登录态）也一起收下了 —— DeepSeek / GLM / Kimi 当场能跑。
 不想开第二个窗口也行：设备码登录拿访问令牌，再把浏览器里的 CNBSESSION 粘进来（或指向自建中继）。
 
 ```
@@ -10,7 +10,17 @@
 可选模型  8 个（DeepSeek V4.1 / GLM 5.3 / Kimi K3 / Hunyuan 4 等）
 登录方式  4 种（浏览器网页登录 / 浏览器设备码 / 本机 cnb-cli / 粘贴凭证）
 跑模型要  一条 CNBSESSION（网页登录态）或一条自建 relay —— 「浏览器网页登录」一趟就给你
+工具调用  ✗ **不支持** · Cookie 通道结构性拒绝，只有 relay 通道能带 tools
 ```
+
+> ⚠ **不能调用工具 —— 这一条决定它能不能进 agent。** CNB 的网页 AI 端点结构性拒绝 `tools`
+> （上游回 `403 Agent calls are not allowed`），插件在发出去之前就拦住并返回 `501 not_implemented`。
+> 而 agent 客户端每个请求都带 `tools` —— 用它必然失败，且那个 501 会被 magpie 当成可重试的失败，
+> 把这个账号冷却一轮（界面上就是「失败 · N 秒后恢复」反复出现）。
+>
+> 纯聊天照常可用：写代码、读长文、解释报错、看图（`glm-5.3-flash-vision`）。
+> 要工具只能 `transport: "relay"` 指向一个**自己搭的** OpenAI 兼容中继 —— 那不是 magpie 本身
+> （填本机网关会成环），中继后面得有真支持 tools 的上游。
 
 > **额度是按月的，没有「每日额度」这一说。** CNB 发的是 AI Credit（当月），每月 1 日 UTC 重置；
 > 免费档 500 credits/月，完成 hello-cnb 入门任务后到 1,166 credits/月（500 免费 + 666 认证/特权）。
@@ -88,6 +98,10 @@ CNB 的可选模型是固定的 8 个（它没有公开的 `/models` 端点）�
 
 在 magpie 里它们显示成 `cnb/deepseek-v4.1-flash` 这样的名字。
 
+> Cookie 通道下这 **8 个模型全部标成 `tool_call: false`** —— 不是漏标，是上游真的拒。
+> 别把它们放进会带 `tools` 的路由组：组是手工配的静态列表，magpie 不会因为这条声明
+> 把成员筛掉，于是请求照样派过去、然后吃一个 501。
+
 ## 签到
 
 CNB **没有**「每日签到」接口 —— 免费 AI Credit 是按月发的（每月 1 日 UTC 重置），
@@ -132,8 +146,17 @@ magpie provider test cnb     # 发一个很小的请求验证通道
 或者重登一次「浏览器网页登录」并把「确认授权」点完。
 
 **2. 为什么模型调不了工具？**
-CNB 的网页 AI 端点结构性拒绝工具调用（上游回 `403 Agent calls are not allowed`）。
-要工具就把 `transport` 设成 `relay`，指向一个 OpenAI 兼容的中继；Cookie 通道本身做不到。
+CNB 的网页 AI 端点结构性拒绝工具调用（上游回 `403 Agent calls are not allowed`），
+插件的做法是在出网之前就返回 `501 not_implemented` —— 不透传那个 403，因为 403 在 magpie
+的语义里会通向「登录失效」，把一个好好的账号摘掉。
+
+**这条对 agent 是致命的**：agent 每个请求都带 `tools`，所以凡是会自己读文件、跑命令的客户端，
+用这个供应商都会失败；而且 501 属于「可重试」，magpie 会换号、同时把这个账号冷却，
+卡片上就显示成「失败 · N 秒后恢复」反复刷。
+正确做法是**别把 `cnb/…` 放进带 tools 的路由组**，它只在纯聊天场景有用。
+
+要工具就把 `transport` 设成 `relay`，指向一个**自己搭的** OpenAI 兼容中继；
+Cookie 通道本身做不到。注意 relay 填的不是 magpie 自己的地址 —— 那会成环。
 
 **3. 报「缺少仓库路径」怎么办？**
 CNB 的 AI 端点挂在 `/{org}/{repo}/-/ai/chat/completions` 下，必须有仓库。
