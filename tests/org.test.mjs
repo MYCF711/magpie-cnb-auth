@@ -77,7 +77,7 @@ test("suggestGroupPath：撞名加 -code，再撞加 -code-2", () => {
 
 // ── createGroupWithSession ──────────────────────────────────────────
 
-test("createGroupWithSession：POST https://api.cnb.cool/groups，头与 body 都对", async () => {
+test("createGroupWithSession：POST https://cnb.cool/groups（网页侧，api.cnb.cool 不认 Cookie），头与 body 都对", async () => {
   const seen = []
   const result = await createGroupWithSession({
     session: SESSION,
@@ -95,7 +95,7 @@ test("createGroupWithSession：POST https://api.cnb.cool/groups，头与 body �
   assert.equal(seen.length, 1)
 
   const { url, init } = seen[0]
-  assert.equal(url, "https://api.cnb.cool/groups")
+  assert.equal(url, "https://cnb.cool/groups", "真机实测：api.cnb.cool 带真 CNBSESSION 也回 401，网页侧才 201")
   assert.equal(init.method, "POST")
 
   const headers = init.headers
@@ -178,11 +178,13 @@ test("createGroupWithSession：缺 session / 缺 slug 直接回，不发请求",
 
 // ── orgHint（卡片上那句「还没有组织」）────────────────────────────────
 
-test("orgHint：有 session 没组织时指出「浏览器网页登录」能顺带建组织", () => {
+test("orgHint：有 session 没组织时给出建组入口，并说清额度缺、模型不缺", () => {
   const hint = orgHint({ noOrg: true, session: SESSION, token: "cnb_at_x" }, {})
   assert.match(hint, /还没有组织/)
-  assert.match(hint, /浏览器网页登录/)
-  assert.match(hint, /顺带建组织/)
+  assert.match(hint, /额度/, "要说清缺的是额度")
+  assert.ok(hint.includes("cnb/docs"), "要说清模型通道不受影响")
+  assert.ok(hint.includes("https://cnb.cool/new/groups"), "要给出真实的建组入口")
+  assert.match(hint, /一年只能建 1 个/, "要提醒 yearly 配额，别让人随手花掉")
 })
 
 test("orgHint：只有网页登录态时额外说清额度还差访问令牌", () => {

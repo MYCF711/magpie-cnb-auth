@@ -40,6 +40,16 @@ export const REFRESH_LEAD_MS = 5 * 60_000
 export const WEB_BASE = "https://cnb.cool"
 export const API_BASE = "https://api.cnb.cool"
 
+/**
+ * 账号**没有组织**时，AI 通道用这个仓库做路径。
+ *
+ * 真机实测（2026-11-03，真实 CNBSESSION）：`POST https://cnb.cool/cnb/docs/-/ai/chat/completions`
+ * 回 200 + 正常 SSE，模型答得出话 —— 也就是说 AI 端点**不要求仓库属于你自己的组织**，
+ * 一个公开仓库就够。这条兜底让「登录完就能跑模型」不再依赖「先建一个组织」，
+ * 也就避开了建组织那条 yearly 配额（一个根组织一年只能建 1 个）。
+ */
+export const PUBLIC_AI_REPO = "cnb/docs"
+
 /** OAuth Device Flow —— 与 cnb-cli 的 `cnb login` 同一套参数 */
 export const OAUTH_DEVICE_URL = `${WEB_BASE}/oauth2/device/auth`
 export const OAUTH_TOKEN_URL = `${WEB_BASE}/oauth2/token`

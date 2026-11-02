@@ -205,20 +205,28 @@ export function buildCookieFetch({ getAuth, options }) {
     const clean = cleanPayload(payload)
     const model = String(clean.model || DEFAULT_MODEL)
 
-    let csrf = csrfkey
-    if (!csrf) {
-      // 只在缺的时候抓一次；失败不影响发请求（不带 csrfkey 的请求多数也能过）
+    // ⚠ **两个 csrf 值是两个不同的东西**（真机实测 2026-11-03）：
+    //     · `csrfkey`  —— Cookie 里的那个（实测 10 位），只能放进 Cookie
+    //     · `csrftoken` —— 页面 HTML 里 `window.csrftoken`（实测 40 位），只能放进 `csrftoken` 请求头
+    //   以前这里只取 csrfkey，然后把它**同时**塞进 Cookie 和请求头 —— 上游一律回
+    //   `401 Blocked by CSRF.`，于是 Cookie 通道从来没有真的跑通过一条消息；
+    //   而那句 401 长得像「登录失效」，排查时会被带到完全错误的方向。
+    let csrfCookie = csrfkey
+    let csrfHeader = ""
+    if (!csrfCookie || !csrfHeader) {
       try {
-        csrf = (await fetchCsrf({ session })).csrfkey
+        const fetched = await fetchCsrf({ session })
+        csrfCookie = csrfCookie || fetched.csrfkey || ""
+        csrfHeader = fetched.csrfToken || ""
       } catch {
-        csrf = ""
+        // 抓不到就不带对应那一个：不带 csrfkey 的请求多数也能过，这里不阻塞
       }
     }
 
     /** 发一次上游。csrf 变化时要能重发，所以抽成函数。 */
-    const send = (csrfValue) => {
+    const send = (cookieValue, headerValue = csrfHeader) => {
       const cookies = [`CNBSESSION=${session}`]
-      if (csrfValue) cookies.push(`csrfkey=${csrfValue}`)
+      if (cookieValue) cookies.push(`csrfkey=${cookieValue}`)
       return fetch(`${WEB_BASE}/${repo}/-/ai/chat/completions`, {
         method: "POST",
         headers: baseHeaders({
@@ -227,7 +235,7 @@ export function buildCookieFetch({ getAuth, options }) {
           cookie: cookies.join("; "),
           origin: WEB_BASE,
           referer: `${WEB_BASE}/${repo}`,
-          ...(csrfValue ? { csrftoken: csrfValue } : {}),
+          ...(headerValue ? { csrftoken: headerValue } : {}),
         }),
         body: JSON.stringify(clean),
         signal: init.signal ?? AbortSignal.timeout(300_000),
@@ -236,20 +244,23 @@ export function buildCookieFetch({ getAuth, options }) {
 
     let response
     try {
-      response = await send(csrf)
+      response = await send(csrfCookie, csrfHeader)
       // 上游对 csrf 不匹配一律回 `401 Blocked by CSRF.` —— 那**不是**登录失效
       // （实测：真上游就是这个文案，仍然会带 401）。先补一次 csrf 重发，
       // 别让一次抓取失败把整个账号标成要重新登录。
       //
-      // 实测（2026-11-02，真上游）：这条闸回的是 **401 `Blocked by CSRF.`**（JSON）；
+      // 实测（2026-11-02/03，真上游）：这条闸回的是 **401 `Blocked by CSRF.`**（JSON）；
       // 另一条路径会回 403 `csrf token mismatch`。两种都要补。
-      // 重发**最多一次**：同一 CNBSESSION 连抓三次拿到的是同一个 csrfkey，
-      // 所以 `fresh !== csrf` 这个条件本身就把重发限死在「缓存值确实过期」的场景。
+      // 重发**最多一次**：同一 CNBSESSION 连抓三次拿到的是同一对值，
+      // 所以「新旧值有变化」这个条件本身就把重发限死在「缓存值确实过期」的场景。
       if (!response.ok && (response.status === 401 || response.status === 403)) {
         const peek = await response.clone().text().catch(() => "")
         if (/csrf/i.test(peek)) {
-          const fresh = await fetchCsrf({ session }).then((r) => r.csrfkey).catch(() => "")
-          if (fresh && fresh !== csrf) response = await send(fresh)
+          const fresh = await fetchCsrf({ session }).catch(() => null)
+          const nextCookie = fresh?.csrfkey || ""
+          const nextHeader = fresh?.csrfToken || ""
+          const changed = (nextCookie && nextCookie !== csrfCookie) || (nextHeader && nextHeader !== csrfHeader)
+          if (changed) response = await send(nextCookie || csrfCookie, nextHeader || csrfHeader)
         }
       }
     } catch (error) {

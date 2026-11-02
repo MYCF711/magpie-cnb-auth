@@ -214,15 +214,18 @@ export async function loginViaBrowser(options = {}, ctx = {}) {
   let org = cleanPath(options.org) || cleanPath(groups[0]?.path)
   let repos = org ? await listReposFn(access, org) : []
 
-  // ⑧ 没有组织就**顺手建一个** —— 这是这条登录路存在的另一半理由
+  // ⑧ 建组织：**只在用户显式要求时**（`options.createOrg === true`），默认不建
   //
-  // ⚠ 为什么只有这里能建：建组织要的是网页登录态（PAT 申请不到 `group-manage:rw`，
-  //   实测 invalid_scope）。而「顺手建」只发生在**用户亲手点了这条登录方式**的时候；
-  //   usage / loader / models 这些读钩子里绝不会自动建（读钩子不该有副作用）。
+  // ⚠ 真机实测（2026-11-03）：一个根组织**一年只能建 1 个**
+  //   （`429 The root organization has reached its yearly creation limit`），
+  //   而且**删掉不退还额度**。所以「登录时顺手建一个」是不能接受的默认值 ——
+  //   那等于替用户烧掉一整年的名额，而他可能只是想看看额度。
+  // ⚠ 而且**跑模型并不需要自己的组织**：AI 端点用公开仓库（`cnb/docs`）就能调，
+  //   实测 200 + 正常 SSE。所以「没组织」现在只影响额度的显示，不影响能不能用。
   // ⚠ 建失败**不算登录失败**：把 status 记进 `metadata.orgAttempt`，卡片按它说话
-  //   （src/org.mjs 的 orgHint）。也**不重试** —— 403 再试一百次还是 403。
+  //   （src/org.mjs 的 orgHint）。也**不重试** —— 429 再试一百次还是 429。
   let orgAttempt = null
-  if (!org && session) {
+  if (!org && session && options.createOrg === true) {
     const suggested = suggestGroupPath(name || user?.username || "", { taken: groups.map((g) => g.path) })
     const created = await createGroupFn({
       session,

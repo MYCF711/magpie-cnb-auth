@@ -20,6 +20,7 @@ import { createHash } from "node:crypto"
 
 import { fetchTopGroups, fetchUser, listRepos } from "./api.mjs"
 import { looksLikeIdentifier } from "./account-name.mjs"
+import { PUBLIC_AI_REPO } from "./context.mjs"
 
 /** 一条凭据的「长相」。粘错东西时光说「无效」等于什么都没说。 */
 export function describeCredentialShape(raw) {
@@ -238,7 +239,11 @@ export function pickRepo(repos, snapshot, options = {}) {
   if (first) return String(first).replace(/^\/+|\/+$/g, "")
 
   const org = String(options?.org || "").replace(/^\/+|\/+$/g, "")
-  return org ? `${org}/${options?.repoName || "code"}` : ""
+  if (org) return `${org}/${options?.repoName || "code"}`
+  // 没有组织也能跑模型 —— 用一个公开仓库做路径就够了（实测见 context.mjs 的 PUBLIC_AI_REPO）。
+  // 以前这里返回空串，Cookie 通道于是直接报「缺少仓库路径」：
+  // 用户明明登录成功了，却因为「还没建组织」什么都跑不了。
+  return PUBLIC_AI_REPO
 }
 
 /**

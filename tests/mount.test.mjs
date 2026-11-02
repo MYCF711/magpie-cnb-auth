@@ -164,7 +164,7 @@ test("usage()：没有组织 + 只有网页登录态 → 指路「浏览器网�
 
   assert.match(String(result.error), /还没有组织/)
   assert.match(String(result.error), /浏览器网页登录/)
-  assert.match(String(result.error), /顺带建组织/, "提示要指向那条真的能建组织的登录路")
+  assert.match(String(result.error), /建一个组织/, "要指向能建组织的入口")
   assert.match(String(result.error), /访问令牌/, "只有 session 的账号还要说清额度差一个 PAT")
   assert.deepEqual(result.windows, [])
 })

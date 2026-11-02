@@ -558,3 +558,71 @@ edge://sync-confirmation-dialog/  |  我们现在正在你的所有设备上同�
 新 profile 对 Edge 来说就是「新装」，它先弹这个模态框，用户得点掉才能看到 cnb.cool。
 已在 `chromiumLogin` 的启动参数里加 `--disable-sync --disable-features=msEdgeSyncPromo,msEdgeSignInPromo,msImplicitSignin`，
 **复测页面数从 2 变 1，同步框消失**（Chrome 会忽略这几个 Edge 专属 feature 名，不影响它）。
+
+### 8.9 真机跑通了：真实 CNBSESSION → 宿主 → 一条真模型回复（2026-11-03）
+
+这一节是整份文档里**证据最强**的一段：用真实登录态，在真 magpie 里，让插件自己打上游。
+
+**怎么拿到真实会话**：本机装着一个带 CDP 的 Chromium（ego lite），里面对 cnb.cool 是**已登录**的，
+用 `Network.getAllCookies` 取到了 5 条 cnb.cool 的 Cookie（`CNBSESSION` 95 字符，`httpOnly=true`）。
+把它写进隔离 magpie 的账号 `metadata.session` 后：
+
+```
+magpie provider test cnb
+  ✓ chat       1822 ms · deepseek-v4.1-flash
+```
+
+**这是「登录 → 额度/通道 → 真的生成了一句话」第一次整条打通。** 过程中抓出四个真 bug / 真事实：
+
+#### ① CSRF 头用错了值 —— Cookie 通道以前**从来没跑通过一条消息**
+
+上游要的是 `window.csrftoken`（页面里的，实测 **40 位**），而插件一直把 **Cookie 里的 `csrfkey`（10 位）**
+塞进 `csrftoken` 请求头。结果上游一律回 `401 Blocked by CSRF.` —— 而那句文案长得像「登录失效」，
+排查时会被带到完全错误的方向。
+
+```
+cookie: CNBSESSION=…; csrfkey=<10 位>
+csrftoken: <40 位，来自页面 window.csrftoken>     → 200 text/event-stream ✅
+x-csrf-token: <40 位>                            → 401 Blocked by CSRF ❌（头名就是这个，不能换）
+```
+
+已修：`src/chat.mjs` 现在分开取两个值 —— `csrfkey` 进 Cookie，`csrftoken` 进请求头。
+
+#### ② 建组织在**网页侧**，不在 `api.cnb.cool`
+
+带**真实** CNBSESSION 打 `https://api.cnb.cool/user` 与 `/user/groups` → 仍然是
+`401 {"errcode":16,"errmsg":"The task will not run because the user is not logged in."}`。
+也就是说 **`api.cnb.cool` 根本不认 Cookie**。同一个会话打网页侧：
+
+```
+GET  https://cnb.cool/user            → 200，返回 id / username / nickname
+GET  https://cnb.cool/user/groups     → 200 []
+POST https://cnb.cool/groups  {path}  → 201 Created
+DELETE https://cnb.cool/{group}       → 200
+```
+
+`src/org.mjs` 的 `GROUP_API` 已从 `api.cnb.cool/groups` 改成 `cnb.cool/groups`。
+
+#### ③ 建组织有**一年一个**的硬配额，而且删掉不退还
+
+```
+POST /groups → 429 {"errcode":8,"errmsg":"The root organization has reached its yearly creation limit."}
+```
+
+验证过程中我误建了一个探测用组织（`magpie-probe-does-not-exist`）并把它删掉了，
+但**配额没有退回** —— 这个账号本年度已经建不了组织。这是本次验证付出的真实代价，必须写在这里。
+
+因此把「登录时顺手建组织」改成了**默认不建**，只有 `options.createOrg === true` 才建：
+一次登录替用户烧掉一整年的名额，不是插件该做的决定。
+
+#### ④ 跑模型**不需要自己的组织** —— 一个公开仓库就够
+
+```
+POST https://cnb.cool/cnb/docs/-/ai/chat/completions  → 200 text/event-stream
+data: {"id":"e898c2…","model":"deepseek-v4.1-flash",…}
+最终拼出来的回答："收到"
+```
+
+所以「没组织」只影响**额度**，不影响**能不能用**。`src/credential.mjs` 的 `pickRepo()`
+在没有组织时兜底到 `PUBLIC_AI_REPO = cnb/docs`；在此之前它会返回空串，
+用户明明登录成功却被告知「缺少仓库路径」。

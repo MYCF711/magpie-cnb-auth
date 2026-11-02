@@ -91,7 +91,7 @@ test("都有：PAT 放 access（查额度），CNBSESSION 放 metadata.session�
     },
   })
 
-  const result = await loginViaBrowser({}, ctx)
+  const result = await loginViaBrowser({ createOrg: true }, ctx)
 
   assert.equal(result.type, "success")
   assert.equal(result.access, PAT, "access 必须是 PAT —— 额度只能用它查")
@@ -141,7 +141,7 @@ test("建组织失败（403）不影响登录，但 status 要留下来说实话
     createGroup: async () => ({ ok: false, status: 403, body: { errcode: 403, errmsg: "User has no permission." } }),
   })
 
-  const result = await loginViaBrowser({}, ctx)
+  const result = await loginViaBrowser({ createOrg: true }, ctx)
 
   assert.equal(result.type, "success", "建组织失败不能把整次登录判失败")
   assert.equal(result.access, PAT)
@@ -238,7 +238,7 @@ test("新建的组织里没有仓库时，顺手建一个默认仓库（否则 A
     },
   })
 
-  const result = await loginViaBrowser({}, ctx)
+  const result = await loginViaBrowser({ createOrg: true }, ctx)
 
   assert.equal(made.length, 1, "空组织应当建一个仓库 —— 不建的话「帮你建组织」只做了一半")
   assert.equal(made[0].org, "tlaloc")

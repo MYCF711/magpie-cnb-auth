@@ -122,17 +122,34 @@ test("cookie 通道：带 tools 直接 501（不透传——上游那个 403 会
   assert.match(body.error.message, /relay/)
 })
 
-test("cookie 通道：没有仓库路径时给 400，而不是发一个必然 404 的请求", async () => {
-  const pluginFetch = buildCookieFetch({
-    getAuth: async () => ({ type: "api", key: SESSION }),
-    options: normaliseOptions({}),
-  })
-  const res = await pluginFetch("https://cnb.cool/-/ai/chat/completions", {
-    method: "POST",
-    body: JSON.stringify({ model: "deepseek-v4.1-flash" }),
-  })
-  assert.equal(res.status, 400)
-  assert.equal((await res.json()).error.code, "invalid_request")
+test("cookie 通道：没有组织时不报 400，而是落到公开仓库（真机实测能跑通）", async () => {
+  // 真机证据（2026-11-03）：`POST https://cnb.cool/cnb/docs/-/ai/chat/completions`
+  // 带真实 CNBSESSION 回 200 + 正常 SSE —— AI 端点不要求仓库属于你自己的组织。
+  let seenUrl = ""
+  await withFetch(
+    async (url) => {
+      seenUrl = String(url)
+      const sse = [
+        'data: {"choices":[{"index":0,"delta":{"content":"好"}}]}',
+        "",
+        "data: [DONE]",
+        "",
+      ].join("\n")
+      return new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    },
+    async () => {
+      const pluginFetch = buildCookieFetch({
+        getAuth: async () => ({ type: "api", key: SESSION, metadata: { session: SESSION } }),
+        options: normaliseOptions({}),
+      })
+      const res = await pluginFetch("https://cnb.cool/x", { method: "POST", body: JSON.stringify({ model: "deepseek-v4.1-flash" }) })
+      assert.equal(res.status, 200, "没有组织也要能跑模型")
+    },
+  )
+  assert.ok(seenUrl.endsWith("/cnb/docs/-/ai/chat/completions"), "兜底用的是公开仓库 cnb/docs")
 })
 
 test("cookie 通道：非流式请求由插件折叠 SSE，并恒以 stream:true 发上游", async () => {
@@ -551,7 +568,7 @@ test("没有组织要说「去建一个」，不是「再登录一次」", async
   assert.doesNotMatch(err.message, /重新登录/, "重新登录治不了「没有组织」")
 })
 
-test("resolveAccount：groups 为空 ⇒ noOrg 为真，且没有仓库路径", async () => {
+test("resolveAccount：groups 为空 ⇒ noOrg 为真，仓库路径兜底到公开仓库", async () => {
   const { resolveAccount } = await import("../src/credential.mjs")
   const account = resolveAccount(
     { type: "api", key: SESSION, metadata: { org: "", groups: [] } },
@@ -559,7 +576,7 @@ test("resolveAccount：groups 为空 ⇒ noOrg 为真，且没有仓库路径", 
   )
   assert.equal(account.noOrg, true)
   assert.equal(account.org, "")
-  assert.equal(account.repo, "", "没有组织就没有仓库路径")
+  assert.equal(account.repo, "cnb/docs", "没有组织时兜底到公开仓库 —— 否则登录成功也跑不了模型")
 })
 
 // ── 通道判定与错误映射：别让「有 PAT 没 session」变成宿主眼里的 404 ──────────

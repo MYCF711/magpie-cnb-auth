@@ -10,10 +10,10 @@
 // 所以能建组织的唯一凭据是**网页登录态**（CNBSESSION + csrf），也就是「浏览器网页登录」
 // 那条路才拿得到的东西。见 src/web-login.mjs。
 //
-// ⚠ **建组织这条没在真机上验证过。** 本机没有可用的 CNBSESSION（Edge 在跑 → Cookie 库被
-//   独占锁定，`cp` 与 node:sqlite 都打不开），所以只验到了「请求形状」：路径、头、body 与
-//   `https://api.cnb.cool/swagger.json` 里的 `POST /groups`（需要 `group-manage:rw`）对齐。
-//   **cookie 鉴权能不能过未知** —— 它可能同样只吃 Bearer，也可能要额外的 csrf 头。
+// ⚠ **建组织有 yearly 配额。** 真机实测（2026-11-03）：一个根组织一年只能建 **1 个**
+//   （`POST /groups` 回 `429 The root organization has reached its yearly creation limit`），
+//   而且**删掉不退还额度**。所以这条路绝不能「登录时顺手建」—— 只允许用户显式要求时才建
+//   （`options.createOrg === true`），否则烧掉的是他一整年的名额。
 //
 //   因此这个函数：① 返回值只有 `{ ok, status, body }`，**绝不抛**；② 调用方按 status 说话
 //   （403 = 没权限，400/409 = 名字不合法或已存在），不要假设成功，也不要自动重试。
@@ -25,8 +25,14 @@
 import { API_BASE, WEB_BASE } from "./context.mjs"
 import { abortSignal, baseHeaders, readBody } from "./http.mjs"
 
-/** 建组织走 OpenAPI：`POST https://api.cnb.cool/groups`（字段形状来自 swagger.json） */
-export const GROUP_API = `${API_BASE}/groups`
+/**
+ * 建组织走**网页侧**：`POST https://cnb.cool/groups`。
+ *
+ * 真机实测（2026-11-03）：`api.cnb.cool` **不认 Cookie**（带真 CNBSESSION 也回
+ * `401 not logged in`），而网页侧 `cnb.cool/groups` 带同一个 Cookie + `csrftoken` 头
+ * 直接 `201 Created`。所以这个端点的归属和我们最初从 swagger 里推的**不一样**。
+ */
+export const GROUP_API = `${WEB_BASE}/groups`
 
 /** CNB 组织 slug 的长度区间（2~30） */
 export const GROUP_SLUG_MIN = 2
@@ -185,15 +191,17 @@ export function orgHint(account, auth) {
     const status = Number(attempt.status) || 0
     const why = status ? `HTTP ${status}` : "请求没发出去"
     return (
-      `这个 CNB 账号还没有组织，上次「浏览器网页登录」顺手建组织没成（${why}${attempt.message ? `：${attempt.message}` : ""}）。` +
-      `到 ${entry} 手动建一个（或在插件选项里填 org），再回来刷新这张卡。` +
+      `这个 CNB 账号还没有组织，上次试着建组织没成（${why}${attempt.message ? `：${attempt.message}` : ""}）。` +
+      `到 ${entry} 手动建一个（或在插件选项里填 org），再回来刷新这张卡。注意一个根组织一年只能建 1 个。` +
       tokenPart
     )
   }
 
   return (
-    "这个 CNB 账号还没有组织 —— AI Credit 是按组织发放的，AI 端点也挂在 /{org}/{repo} 下。" +
-    `点「浏览器网页登录」可以顺带建组织（一次拿到额度 + 通道）；也可以直接到 ${entry} 建一个。` +
+    "这个 CNB 账号还没有组织 —— **AI Credit 是按组织发放的，所以额度这一行读不出来**。" +
+    "模型通道不受影响：AI 端点用一个公开仓库就能调（插件会走 cnb/docs）。" +
+    `想要额度就到 ${entry} 建一个组织。注意一个根组织**一年只能建 1 个**（删掉不退还），` +
+    "所以插件不会替你自动建 —— 要建就自己点，别把一年的名额花在一次登录上。" +
     tokenPart
   )
 }

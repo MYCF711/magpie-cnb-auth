@@ -235,6 +235,19 @@ POST https://cnb.cool/{org}/{repo}/-/ai/chat/completions
 `text/html` 只在 Cloudflare / 网关拦下来时才出现。所以「仓库路径不对 → 上游回 HTML」
 这句旧结论是错的，已经改掉。
 
+### 5.1.1 两个 csrf 值是**两个不同的东西**（真机实测，2026-11-03）
+
+| 值 | 从哪来 | 长度（实测） | 放哪 |
+|---|---|---|---|
+| `csrfkey` | Cookie `csrfkey` | 10 | **Cookie** |
+| `csrftoken` | 页面 HTML 里的 `window.csrftoken` | 40 | **`csrftoken` 请求头** |
+
+把 `csrfkey` 塞进请求头（或把 `csrftoken` 塞进 Cookie）都会被上游回
+`401 Blocked by CSRF.` —— 而那句文案看起来像「登录失效」，会把人带到完全错误的方向。
+头名就是 `csrftoken`；`X-CSRF-Token` 实测无效（同样是 401）。
+
+---
+
 ### 5.2 自建 relay
 
 指向一个 OpenAI 兼容中继。插件把请求头重构一遍再发，不是「只换 Authorization」：
