@@ -424,17 +424,17 @@ async function checkCookieChannel() {
 
   // ── case c：仓库路径写错 ──
   //
-  // ⚠ 实测结论：带任何 csrfkey 的请求会被 CSRF 闸先拦下（401 Blocked by CSRF.），
-  //   仓库鉴权那一步在这套假凭据下**不可达**。所以这里记录真实现象，
-  //   「路径写错的 403 怎么映射」放到 case e 单独验证。
+  // ⚠ 2026-11-03 更正：csrf 头用对之后（csrftoken 而不是 csrfkey），这套假凭据**能穿过**
+  //   CSRF 闸，于是仓库鉴权那一步可达 —— 路径写错时上游回 404。插件必须把它落成 502
+  //   而不是 model_not_found（R4：404 只能用于「模型不存在」，落 404 会让宿主搁置模型，
+  //   而真正要修的是仓库路径）。这条现在验的就是这件事。
   const d = await runCase({ auth: { type: "api", key: FAKE_SESSION }, options: { repo: BOGUS_REPO } })
   c.note(
     `case c（仓库路径 ${BOGUS_REPO}）→ HTTP ${d.status} · code=${d.json?.error?.code ?? "(无)"} · ` +
       `x-magpie-sign-in=${d.signIn ?? "(无)"} · 上游 POST ${d.posts} 次 · 是 HTML=${d.contentType.includes("text/html")}`,
   )
-  c.note("    ↑ 假 CNBSESSION 下 CSRF 闸先回答，路径写错的分支不可达；路径那条见 case e")
-  c.eq(d.status, 401, "case c 的真实行为（CSRF 闸优先，落登录失效）")
-  c.eq(d.json?.error?.code, CODES.sessionExpired, "case c 的错误码")
+  c.eq(d.status, 502, "路径写错要落 502（可换号、不搁置模型），不是 401 也不是 404")
+  c.eq(d.json?.error?.code, CODES.upstreamError, "case c 的错误码")
 
   // ── case d：带 tools → 发请求之前就拒绝 ──
   const toolsBody = JSON.stringify({

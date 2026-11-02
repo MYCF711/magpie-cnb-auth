@@ -626,3 +626,16 @@ data: {"id":"e898c2…","model":"deepseek-v4.1-flash",…}
 所以「没组织」只影响**额度**，不影响**能不能用**。`src/credential.mjs` 的 `pickRepo()`
 在没有组织时兜底到 `PUBLIC_AI_REPO = cnb/docs`；在此之前它会返回空串，
 用户明明登录成功却被告知「缺少仓库路径」。
+
+#### ⑤ 上游 404 是「仓库路径不存在」，不是「模型不存在」
+
+csrf 头修对之后，case c（仓库路径故意写错）第一次真的走到了仓库鉴权：
+
+```
+case c（仓库路径 cnb/no-such-repo-live-probe）→ 上游 404 → 插件原本映射 404 model_not_found
+```
+
+按 ERROR-CODES R4，`404` 只能用于「模型不存在」—— 落 404 会让宿主把这个模型**整个搁置**，
+而用户真正要修的是仓库路径。已改成 `502 upstream_error`（可换号、不搁置模型）。
+`scripts/live-verify.mjs` 的 case c 断言也跟着从「401 登录失效」改成「502 路径问题」
+—— 它原来记的是 csrf 没修对时的假象。

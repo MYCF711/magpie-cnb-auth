@@ -442,7 +442,7 @@ test("claim 返回体：已领过 / 验证码 / 成功 各自落到正确的 out
 
 // ── 错误语义：模型级失败不许打死账号（脚手架坑 6）────────────────────
 
-test("模型级 404 原样透出，且不标登录失效", async () => {
+test("上游 404 落 502 而不是 model_not_found（这个端点的 404 是仓库路径问题）", async () => {
   const pluginFetch = buildCookieFetch({
     getAuth: async () => ({ type: "api", key: SESSION }),
     options: normaliseOptions({ repo: "acme/code" }),
@@ -458,8 +458,11 @@ test("模型级 404 原样透出，且不标登录失效", async () => {
         method: "POST",
         body: JSON.stringify({ model: "nope", stream: false }),
       })
-      assert.equal(res.status, 404, "只搁置这个模型")
-      assert.equal((await res.json()).error.code, "model_not_found")
+      // 真机实测（2026-11-03）：csrf 修好之后，仓库路径写错时上游回的就是 404。
+      // 按 ERROR-CODES R4，404 只能用于「模型不存在」—— 这里的 404 是路径问题，
+      // 落 404 会让宿主把这个模型整个搁置，而用户要修的其实是仓库路径。
+      assert.equal(res.status, 502, "路径问题落 502（可换号、不搁置模型）")
+      assert.equal((await res.json()).error.code, "upstream_error")
       assert.equal(res.headers.get("x-magpie-sign-in"), null, "不许标账号 —— 那会停掉整个账号")
     },
   )
@@ -600,7 +603,7 @@ test("statusForCookie：登录失效才 401；非登录的 401/403 落 502；HTM
   assert.equal(statusForCookie(403, { loginBroken: true }), 401, "登录类 403（csrf/未登录）等价于失效")
   assert.equal(statusForCookie(403, { loginBroken: false }), 502, "403 没有宿主语义，进默认桶")
   assert.equal(statusForCookie(200, { htmlInstead: true }), 502, "HTML 不是业务错误体")
-  assert.equal(statusForCookie(404, { loginBroken: false }), 404, "模型不存在仍然只搁置这个模型")
+  assert.equal(statusForCookie(404, { loginBroken: false }), 502, "上游 404 是仓库路径问题，不许搁置模型")
   assert.equal(statusForCookie(503, { loginBroken: false }), 503, "上游 5xx 是「重试有意义」")
 })
 

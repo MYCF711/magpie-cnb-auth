@@ -109,6 +109,11 @@ export function statusForCookie(upstreamStatus, { htmlInstead = false, loginBrok
   if (loginBroken) return 401
   const n = Number(upstreamStatus) || 0
   if (n === 401 || n === 403) return 502
+  // ⚠ 上游 404 **不是**「模型不存在」：AI 端点是 /{org}/{repo}/-/ai/...，
+  //   路径写错时上游回的就是 404（真机实测 2026-11-03，csrf 修好之后才走得到这一步）。
+  //   按 ERROR-CODES R4 不许把它当 model_not_found —— 那会让宿主把这个模型整个搁置，
+  //   而用户真正要修的是仓库路径。落 502（可换号、不搁置）+ 说清路径。
+  if (n === 404) return 502
   return statusForUpstream(n)
 }
 
