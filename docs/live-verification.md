@@ -563,6 +563,17 @@ edge://sync-confirmation-dialog/  |  我们现在正在你的所有设备上同�
 
 这一节是整份文档里**证据最强**的一段：用真实登录态，在真 magpie 里，让插件自己打上游。
 
+> ⚠ **先说清这一节的边界，别把它读成「插件的隔离浏览器登录验过了」。**
+> 验证用的会话**不是**插件自己那条路拿到的：插件开的是一次性 profile（`magpie-login-*`），
+> 那个 profile 里**没有登录态**，要人在窗口里手输一次凭据才拿得到 —— 这一次没有人登。
+> 我取会话的方式是**借用一个本来就登录着的浏览器**（本机一个带 CDP 的浏览器，里面对 cnb.cool
+> 已是登录状态），从它的 `Network.getAllCookies` 把 `CNBSESSION` 拿出来。
+>
+> 换句话说：**「Cookie → 插件 loader → 真实模型回复」这一整段被证明了；
+> 「隔离窗口里登录一次就能拿到 CNBSESSION」这一段仍然没有证据。** 两者的区别是
+> 「插件拿到会话之后干得对不对」和「插件能不能自己拿到会话」—— 这次只证明了前者。
+> 用完已经把借来的凭据从隔离配置里删掉，本机受控窗口进程也清到 0 个。
+
 **怎么拿到真实会话**：本机装着一个带 CDP 的 Chromium（ego lite），里面对 cnb.cool 是**已登录**的，
 用 `Network.getAllCookies` 取到了 5 条 cnb.cool 的 Cookie（`CNBSESSION` 95 字符，`httpOnly=true`）。
 把它写进隔离 magpie 的账号 `metadata.session` 后：

@@ -180,6 +180,11 @@ CNB 的 AI Credit 按**组织**发放，AI 端点也挂在 `/{org}/{repo}/-/ai/.
 所以默认不建。真要开：插件选项里写 `{"createOrg": true}`，它会在「浏览器网页登录」那一次里试一次，
 失败不重试、也不会把登录判失败（状态码写进卡片）。手动建就在 <https://cnb.cool/new/groups>。
 
+> **还没被验证的那一步**：插件开的是一次性 profile，里面没有登录态，所以
+> 「人在窗口里登录一次 → 插件拿到 CNBSESSION」这一段**没有走过**。
+> 已经证明的是：窗口能开、CDP 能读 Cookie、以及**拿到 Cookie 之后整条链路跑得通**
+> （用另一个本来就登录着的浏览器的会话验的）。
+
 接口本身是验过的：`POST https://cnb.cool/groups`（网页侧，不是 `api.cnb.cool` —— 那个网关不认 Cookie）
 配上 `csrftoken` 头会回 `201 Created`；slug 规则也来自上游原话：长度 3–50、首尾不能是特殊字符。
 
