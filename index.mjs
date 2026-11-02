@@ -325,7 +325,14 @@ export const CnbAuthPlugin = async (_ctx, rawOptions) => {
           //   用户会拿着一个组织提示去查一个根本不存在的组织问题。
           const credentialish = error?.code === CODES.signInRequired || error?.code === CODES.invalidRequest
           const hint = credentialish ? orgHint(resolveAccount(auth, options), auth) : ""
-          return { error: hint || String(error?.message ?? error), windows: [], ...(error?.signIn ? { signIn: error.signIn } : {}) }
+          // 名字：错误卡片也要显示昵称，别退回到 cnb.dI2DzHg0QHA 这种系统 ID
+          const who = error?.user ? displayNameOf(error.user) : ""
+          return {
+            ...(who ? { user: who } : {}),
+            error: hint || String(error?.message ?? error),
+            windows: [],
+            ...(error?.signIn ? { signIn: error.signIn } : {}),
+          }
         }
 
         const account = resolveAccount(auth, options)

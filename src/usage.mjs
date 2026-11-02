@@ -228,8 +228,9 @@ export async function fetchUsageSnapshot({ token, org, signal } = {}) {
     // `/{org}/{repo}/-/ai/...` 下，所以没有组织就既没有额度、也没有通道。
     // 说清要做什么，别让用户对着「重新登录」反复点。
     const error = upstreamError(
-      "这个 CNB 账号还没有组织 —— AI Credit 是按组织发放的，AI 端点也挂在 /{org}/{repo} 下。" +
-        "先到 https://cnb.cool/new/groups 建一个（或让组织管理员把你加进去），再回来刷新。" +
+      "这个 CNB 账号还没有组织 —— **AI Credit 是按组织发放的，所以额度这一行读不出来**。" +
+        "模型通道不受影响：AI 端点用公开仓库就能调（插件默认走 cnb/docs）。" +
+        "想要额度到 https://cnb.cool/new/groups 建一个（一个根组织一年只能建 1 个，删掉不退还）；" +
         "已经有组织却显示这条：在插件选项里直接填 org（组织 slug）。",
       400,
     )
@@ -258,8 +259,16 @@ export async function fetchUsageSnapshot({ token, org, signal } = {}) {
  * `/user` 失败**不影响**额度 —— 只是没有徽章，别为了一枚标签把整张卡片弄成错误。
  */
 export async function fetchAccountSnapshot({ token, org, signal } = {}) {
-  const credit = await fetchUsageSnapshot({ token, org, signal })
+  // ⚠ 先取 `/user`：没有组织时额度那一步会抛，但**账号名仍然该显示昵称**。
+  //   顺序反过来就会让卡片退回到 `cnb.dI2DzHg0QHA` 这种系统 ID（真机实测踩过）。
   const user = await fetchUser(token, { signal }).catch(() => null)
+  let credit
+  try {
+    credit = await fetchUsageSnapshot({ token, org, signal })
+  } catch (error) {
+    if (user) error.user = user   // 让调用方在错误卡片上也能显示昵称
+    throw error
+  }
   let badges = user ? badgesFromUser(user) : []
   badges = badgesFromCreditDesc(credit.specialDesc, badges)
   return { user, badges, credit }
