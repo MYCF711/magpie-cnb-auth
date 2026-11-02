@@ -51,6 +51,7 @@ import { loginViaDevice, refreshAccessToken } from "./src/device.mjs"
 import { fetchTopGroups, fetchUser, listRepos } from "./src/api.mjs"
 import {
   accountNameOf,
+  displayNameOf,
   ensureCredential,
   pickRepo,
   rawCredentialOf,
@@ -119,7 +120,8 @@ async function authorizeFromLocal(options) {
     access,
     refresh,
     expires: expires || Date.now() + 8 * 3600_000,
-    accountId: user.username || "",
+    // 名字取昵称（`cnb.xxxx` 那种自动用户名不是名字，见 credential.mjs 的 displayNameOf）
+    accountId: displayNameOf(user),
     uid: String(user.id || user.username || ""),
     org,
     repo,
@@ -127,6 +129,7 @@ async function authorizeFromLocal(options) {
       org,
       repo,
       username: user.username || "",
+      nickname: displayNameOf(user),
       userId: String(user.id || ""),
       kind: "pat",
       clientId: local.clientId,
@@ -268,13 +271,24 @@ export const CnbAuthPlugin = async (_ctx, rawOptions) => {
 
         const account = resolveAccount(auth, options)
         const transport = pickTransport(account, options)
-        return buildUsage({
-          credit: snapshot.credit,
-          badges: snapshot.badges,
-          transport,
-          username: accountNameOf(snapshot.user ? { username: snapshot.user.username } : null, auth),
-          org: account.org,
-        })
+        try {
+          return buildUsage({
+            credit: snapshot.credit,
+            badges: snapshot.badges,
+            transport,
+            hasSession: Boolean(account.session),
+            // 名字：昵称优先（`cnb.xxxx` 自动用户名不是名字，见 credential.mjs 的 displayNameOf）
+            username: accountNameOf(
+              snapshot.user ? { nickname: displayNameOf(snapshot.user), username: snapshot.user.username } : null,
+              auth,
+            ),
+            org: account.org,
+          })
+        } catch (error) {
+          // 窗口构造器抛的是**编码错误**（比如漏了 used）—— 直接抛出去，用户只会看到
+          // 「读取失败」而日志里什么都没有。把它变成有原因的一行文字。
+          return { error: `额度窗口拼装失败：${error?.message ?? error}`, windows: [] }
+        }
       },
 
       // ═══ ⑥ 签到 ═══════════════════════════════════════════════════

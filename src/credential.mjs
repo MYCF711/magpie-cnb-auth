@@ -15,6 +15,7 @@
 import { createHash } from "node:crypto"
 
 import { fetchTopGroups, fetchUser, listRepos } from "./api.mjs"
+import { looksLikeIdentifier } from "./account-name.mjs"
 
 /** 一条凭据的「长相」。粘错东西时光说「无效」等于什么都没说。 */
 export function describeCredentialShape(raw) {
@@ -101,6 +102,7 @@ export async function identifyCredential(raw, { signal, options } = {}) {
           kind: "pat",
           token: value,
           username: String(user.username || ""),
+          nickname: displayNameOf(user),
           userId: String(user.id || ""),
           org,
           groups: groups.map((g) => g.path),
@@ -181,8 +183,12 @@ export function resolveAccount(auth, options = {}) {
     session: kind === "session" ? raw : String(meta.session || ""),
     csrfkey: String(cached?.csrfkey || meta.csrfkey || ""),
     username: String(cached?.username || meta.username || auth?.accountId || ""),
+    nickname: String(cached?.nickname || meta.nickname || ""),
     org,
     repo,
+    // `org` 探测为空 ⇒ 这个账号在 CNB 上没有组织。额度按组织发，AI 端点也挂在组织下，
+    // 所以这不是「再试一次」能好的，要引导用户去建一个（实测：当天注册的号 `/user/groups` 就是 `[]`）。
+    noOrg: !org && (cached?.groups || meta.groups || []).length === 0,
     groups: cached?.groups || [],
     repos: cached?.repos || [],
   }
@@ -222,10 +228,49 @@ export function pickRepo(repos, snapshot, options = {}) {
   return org ? `${org}/${options?.repoName || "code"}` : ""
 }
 
+/**
+ * CNB 给新账号自动生成的用户名的形状：`cnb.dI2DzHg0QHA`。
+ *
+ * 实测（2026-11-02，一个当天注册的账号）：`GET /user` 返回
+ * `username: "cnb.dI2DzHg0QHA"`、`nickname: "Tlaloc"` —— 用户名是系统编的，
+ * 昵称才是用户自己填的。把这串显示成账号名，就是 AGENTS 坑 27 说的
+ * 「卡片上是一串看不懂的 ID」。
+ */
+const AUTO_USERNAME = /^cnb\.[A-Za-z0-9_-]{4,}$/
+
+/**
+ * 这个字符串能不能当账号名显示。
+ *
+ * 两道关：① 不能被 `looksLikeIdentifier` 判成内部 ID（`iam::…` / urn / uuid / 裸 hash）；
+ * ② 不能是 CNB 自动生成的 `cnb.xxxx` 用户名。
+ */
+export function isAutoUsername(value) {
+  const s = String(value || "").trim()
+  return Boolean(s) && (AUTO_USERNAME.test(s) || looksLikeIdentifier(s))
+}
+
+/**
+ * 从 `GET /user` 的返回里挑一个给人看的名字。
+ *
+ * 优先级：`nickname` → `username`（**只有当它既不是自动用户名、也不像内部 ID**）→ 空串。
+ * 取不到就是空串，让宿主回退到供应商名 —— 不编造，也不退回那串 ID（AGENTS 坑 27）。
+ */
+export function displayNameOf(user) {
+  const nickname = String(user?.nickname || "").trim()
+  if (nickname && !looksLikeIdentifier(nickname)) return nickname
+  const username = String(user?.username || "").trim()
+  if (username && !isAutoUsername(username)) return username
+  return ""
+}
+
 /** 卡片的账号名：**名字**，不是内部 ID（HOOKS 坑 27）。取不到就是空串，宿主回退供应商名。 */
 export function accountNameOf(record, auth) {
+  const nickname = String(record?.nickname || "").trim()
+  if (nickname && !looksLikeIdentifier(nickname)) return nickname
   const name = String(record?.username || "").trim()
-  if (name) return name
+  // 存量账号里可能存着 `cnb.xxxx` 这种自动用户名（老版本写进 accountId 的）——
+  // 那也不是名字，宁可空串让宿主回退供应商名。
+  if (name && !isAutoUsername(name)) return name
   const stored = String(auth?.accountId || "").trim()
-  return stored
+  return isAutoUsername(stored) ? "" : stored
 }

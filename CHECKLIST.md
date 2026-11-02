@@ -72,7 +72,7 @@
       判据：卡片上不会出现 `iam::…` / `urn:…` / uuid / `hw0000…` 这类 ID；
             手机号（去掉国家码后 ≥11 位）是打码的（`138****8000`）；短号不显示；名字取不到时是**空串**而不是 ID；
             多账号重复登录仍是替换（slug 不变）
-      出处：HOOKS 八 · src/account-name.mjs 的 resolveAccount
+      出处：HOOKS 八 · src/credential.mjs 的 displayNameOf / accountNameOf（CNB 的 username 是 cnb.xxxx 生成的，名字取 nickname）
 
 □ 16. 包名是 slug，显示名在 magpie.name
       判据：package.json.name 只含小写 ASCII（`^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$`），

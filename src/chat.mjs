@@ -43,15 +43,25 @@ export function wantsTools(payload) {
   return Array.isArray(payload?.tools) && payload.tools.length > 0
 }
 
-/** 通道判定：显式配置优先，`auto` 按 relay → cookie。 */
+/**
+ * 通道判定：显式配置优先，`auto` 按 relay → cookie。
+ *
+ * ⚠ `none` 的含义是**这条账号一条通道都没有**（没凭据），不是「有凭据但缺 CNBSESSION」。
+ *   后者必须落到 `cookie` —— 因为 CNB 的访问令牌（PAT）调不了模型端点（上游一律 403
+ *   [NO_RIGHT]），而 `buildCookieFetch` 会给出准确的一句话（「缺 CNBSESSION，粘贴一下」）。
+ *   以前这里对「有 PAT 没 session」返回 `none`，`loader` 于是返回 `{}`，宿主只能拿
+ *   `provider.api` 去拼一条根本不存在的 `/chat/completions` —— 用户看到的是
+ *   迷惑的 **404 Not Found**（2026-11-02 在本机 magpie 上实测）。
+ */
 export function pickTransport(account, options = {}) {
   const wanted = String(options.transport || "auto").toLowerCase()
   const hasRelay = Boolean(String(options.relay?.url || "").trim())
+  // 一条凭据就够了（PAT 或 CNBSESSION 都算）：缺什么由通道自己说清楚。
+  const hasCredential = Boolean(account?.raw || account?.token || account?.session)
   if (wanted === "relay") return hasRelay ? "relay" : "none"
-  if (wanted === "cookie") return account?.session ? "cookie" : "none"
+  if (wanted === "cookie") return hasCredential ? "cookie" : "none"
   if (hasRelay) return "relay"
-  if (account?.session) return "cookie"
-  return "none"
+  return hasCredential ? "cookie" : "none"
 }
 
 /** 中继的 baseURL：去掉尾斜杠与 `/v1`，SDK 自己会拼 `/chat/completions`。 */
@@ -82,6 +92,24 @@ export function requestUrl(input) {
   } catch {
     return ""
   }
+}
+
+/**
+ * cookie 通道的「上游状态码 → 宿主状态码」。
+ *
+ * 规则只有三条，全部来自 ERROR-CODES §2：
+ *   · **登录失效 → 401**：这是唯一该让宿主把账号摘掉的时候。
+ *   · **不是登录问题的 401 / 403 → 502**：401 落 401 会让宿主把号标成「要重新登录」，
+ *     而真实原因可能只是这条请求；403 更没有宿主语义。两者都进 `upstream_error`
+ *     （换号有救、不会误杀账号，message 里保留上游原文）。
+ *   · **HTML 响应 → 502**：那是 Cloudflare / 网关页，不是业务错误体。
+ */
+export function statusForCookie(upstreamStatus, { htmlInstead = false, loginBroken = false } = {}) {
+  if (htmlInstead) return 502
+  if (loginBroken) return 401
+  const n = Number(upstreamStatus) || 0
+  if (n === 401 || n === 403) return 502
+  return statusForUpstream(n)
 }
 
 /** 上游状态码 → 宿主认识的状态码。这些映射错了宿主就会换错东西（ERROR-CODES §2）。 */
@@ -117,7 +145,21 @@ export function buildCookieFetch({ getAuth, options }) {
     try {
       record = await ensureCredential(auth, { options })
     } catch (error) {
-      return errorResponse(String(error?.message || error), 401, CODES.sessionExpired, { signIn: "expired" })
+      // ⚠ 只有**真的是登录问题**才落 401。`identifyCredential` 打 `/user` 时网络抖一下
+      //   （api.cnb.cool 回 5xx / 连不上）也会抛 —— 那把它说成「登录失效」会让宿主
+      //   把账号摘掉、failover 到每一个账号，用户还得重新登录一次，而其实什么都没坏。
+      const upstreamStatus = Number(error?.status) || 0
+      if (error?.signIn === "expired" || upstreamStatus === 401) {
+        return errorResponse(String(error?.message || error), 401, CODES.sessionExpired, { signIn: "expired" })
+      }
+      if (upstreamStatus >= 500 || upstreamStatus === 0) {
+        return errorResponse(
+          `识别 CNB 凭据时上游不可用：${error?.message || error}`,
+          503,
+          CODES.upstreamUnavailable,
+        )
+      }
+      return errorResponse(String(error?.message || error), upstreamStatus, codeForStatus(upstreamStatus))
     }
 
     const account = resolveAccount(auth, options)
@@ -173,12 +215,11 @@ export function buildCookieFetch({ getAuth, options }) {
       }
     }
 
-    const cookies = [`CNBSESSION=${session}`]
-    if (csrf) cookies.push(`csrfkey=${csrf}`)
-
-    let response
-    try {
-      response = await fetch(`${WEB_BASE}/${repo}/-/ai/chat/completions`, {
+    /** 发一次上游。csrf 变化时要能重发，所以抽成函数。 */
+    const send = (csrfValue) => {
+      const cookies = [`CNBSESSION=${session}`]
+      if (csrfValue) cookies.push(`csrfkey=${csrfValue}`)
+      return fetch(`${WEB_BASE}/${repo}/-/ai/chat/completions`, {
         method: "POST",
         headers: baseHeaders({
           "content-type": "application/json",
@@ -186,11 +227,31 @@ export function buildCookieFetch({ getAuth, options }) {
           cookie: cookies.join("; "),
           origin: WEB_BASE,
           referer: `${WEB_BASE}/${repo}`,
-          ...(csrf ? { csrftoken: csrf } : {}),
+          ...(csrfValue ? { csrftoken: csrfValue } : {}),
         }),
         body: JSON.stringify(clean),
         signal: init.signal ?? AbortSignal.timeout(300_000),
       })
+    }
+
+    let response
+    try {
+      response = await send(csrf)
+      // 上游对 csrf 不匹配一律回 `401 Blocked by CSRF.` —— 那**不是**登录失效
+      // （实测：真上游就是这个文案，仍然会带 401）。先补一次 csrf 重发，
+      // 别让一次抓取失败把整个账号标成要重新登录。
+      //
+      // 实测（2026-11-02，真上游）：这条闸回的是 **401 `Blocked by CSRF.`**（JSON）；
+      // 另一条路径会回 403 `csrf token mismatch`。两种都要补。
+      // 重发**最多一次**：同一 CNBSESSION 连抓三次拿到的是同一个 csrfkey，
+      // 所以 `fresh !== csrf` 这个条件本身就把重发限死在「缓存值确实过期」的场景。
+      if (!response.ok && (response.status === 401 || response.status === 403)) {
+        const peek = await response.clone().text().catch(() => "")
+        if (/csrf/i.test(peek)) {
+          const fresh = await fetchCsrf({ session }).then((r) => r.csrfkey).catch(() => "")
+          if (fresh && fresh !== csrf) response = await send(fresh)
+        }
+      }
     } catch (error) {
       if (error?.name === "AbortError") {
         return errorResponse(`等待 cnb.cool 响应超时（${repo}）`, 504, CODES.upstreamTimeout)
@@ -202,15 +263,20 @@ export function buildCookieFetch({ getAuth, options }) {
     const htmlInstead = contentType.includes("text/html")
     if (!response.ok || htmlInstead) {
       const body = await readBody(response)
+      const csrfBlocked = /csrf/i.test(errorText(body))
       const detail = htmlInstead
-        ? `上游返回了 HTML（${response.status}）：通常是仓库路径不对（当前 ${repo}）或登录态已过期`
-        : `CNB 上游 ${response.status}：${errorText(body)}`
+        ? `上游返回了 HTML（${response.status}）：那是 Cloudflare / 网关页，不是业务错误体。` +
+          `最常见的原因是登录态已过期；仓库路径当前是 ${repo}。`
+        : csrfBlocked
+          ? `CNB 拒绝了这次请求（${response.status} Blocked by CSRF）：补了 csrf 令牌仍然不过，` +
+            `说明这条 CNBSESSION 已经失效，请重新登录。仓库路径当前是 ${repo}。`
+          : `CNB 上游 ${response.status}：${errorText(body)}`
       const loginBroken = isLoginBroken(response.status, body)
-      const status = htmlInstead ? 502 : statusForUpstream(response.status)
+      const status = statusForCookie(response.status, { htmlInstead, loginBroken })
       return errorResponse(
         detail,
         status,
-        htmlInstead ? CODES.upstreamError : loginBroken ? CODES.sessionExpired : codeForStatus(status),
+        loginBroken ? CODES.sessionExpired : codeForStatus(status),
         loginBroken ? { signIn: "expired" } : {},
       )
     }
@@ -227,7 +293,13 @@ export function buildCookieFetch({ getAuth, options }) {
     try {
       folded = await foldSse(response, model)
     } catch (error) {
-      return errorResponse(`折叠上游 SSE 失败：${error?.message || error}`, 502, CODES.upstreamError)
+      // 折叠失败＝上游的流不完整（提前结束 / 坏帧）。这属于「重试有意义」，
+      // 按 ERROR-CODES R8 必须落 504 upstream_timeout，**不许**落 502。
+      return errorResponse(
+        `折叠上游 SSE 失败（流可能被截断）：${error?.message || error}`,
+        504,
+        CODES.upstreamTimeout,
+      )
     }
     return jsonResponse(folded, 200, { "x-magpie-sign-in": "kept" })
   }
@@ -305,5 +377,20 @@ export async function buildLoaderResult({ getAuth, options }) {
       fetch: buildCookieFetch({ getAuth, options }),
     }
   }
-  return {}
+
+  // 走到这里只有一种情况：用户在选项里点名 `transport: "relay"` 却没填 relay.url。
+  // ⚠ 绝不能返回 `{}` —— 那样宿主会拿 `provider.api`（https://cnb.cool）去拼一条根本
+  //   不存在的 `/chat/completions`，用户看到的是一个迷惑的 404（2026-11-02 本机实测）。
+  return {
+    baseURL: WEB_BASE,
+    apiKey: "cnb-none",
+    headers: { "user-agent": baseHeaders()["user-agent"] },
+    fetch: async () =>
+      errorResponse(
+        "插件选项里把 transport 设成了 relay，但 relay.url 是空的。" +
+          "填一个 OpenAI 兼容中继的地址，或者把 transport 改回 auto（用 CNB 网页登录态直连）。",
+        400,
+        CODES.invalidRequest,
+      ),
+  }
 }

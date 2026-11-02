@@ -17,7 +17,7 @@
 import { OAUTH_CLIENT_ID, OAUTH_DEVICE_URL, OAUTH_TOKEN_URL, WEB_BASE } from "./context.mjs"
 import { fetchUser, fetchTopGroups, listRepos } from "./api.mjs"
 import { abortSignal, baseHeaders, readBody } from "./http.mjs"
-import { pickRepo } from "./credential.mjs"
+import { displayNameOf, pickRepo } from "./credential.mjs"
 
 /** RFC 8628 设备码授权的 grant_type */
 export const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -207,13 +207,16 @@ export async function loginViaDevice(options = {}, ctx = {}) {
       const org = String(options.org || groups[0]?.path || "").replace(/^\/+|\/+$/g, "")
       const repos = org ? await listRepos(access, org) : []
       const repo = pickRepo(repos, "", { ...options, org })
+      // ⚠ 名字取**昵称**：新账号的 `username` 是 `cnb.dI2DzHg0QHA` 这种系统编的串
+      //   （实测 2026-11-02），写进 accountId 就是卡片上一串看不懂的 ID（AGENTS 坑 27）。
+      const name = displayNameOf(user)
 
       return {
         type: "success",
         access,
         refresh: String(token.refresh_token || ""),
         expires: Date.now() + (Number(token.expires_in) || 28_800) * 1000,
-        accountId: user.username || "",
+        accountId: name,
         uid: String(user.id || user.username || ""),
         // 下面这些是「AI 通道需要的上下文」，不是标准 auth 字段 —— magpie 会原样合并保存，
         // 续期时不许把它们清空（铁律 3）。
@@ -223,6 +226,7 @@ export async function loginViaDevice(options = {}, ctx = {}) {
           org,
           repo,
           username: user.username || "",
+          nickname: name,
           userId: String(user.id || ""),
           kind: "pat",
           clientId: dev.clientId,

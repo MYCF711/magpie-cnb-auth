@@ -1,7 +1,7 @@
 {
   "name": "magpie-cnb-auth",
   "version": "0.1.0",
-  "description": "magpie / OpenCode provider plugin for 云原生构建 CNB (cnb.cool): browser device-flow login, monthly AI Credit quota card, and a CNB-cookie or self-hosted-relay AI channel — no API key to paste.",
+  "description": "magpie / OpenCode provider plugin for 云原生构建 CNB (cnb.cool): browser device-flow sign-in, monthly AI Credit quota card, and a CNB-session or self-hosted-relay AI channel.",
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",
@@ -28,7 +28,8 @@
     "GUIDE.md",
     "OFFICIAL-SOURCES.md",
     "SCORING.md",
-    "CONTRIBUTING.md"
+    "CONTRIBUTING.md",
+    "MAINTENANCE.md"
   ],
   "keywords": [
     "magpie",

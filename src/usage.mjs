@@ -12,7 +12,7 @@
 // ⚠ 窗口对象一律用 src/quota.mjs 的构造器，不要自己拼 —— 它把「写错不报错、
 //   但 GUI 和智能路由会坏」的写法变成运行时错误（AGENTS 坑 22 / 24）。
 
-import { usage as quotaUsage, usageWindow } from "./quota.mjs"
+import { toIso, usage as quotaUsage, usageWindow } from "./quota.mjs"
 import { CODES, upstreamError } from "./http.mjs"
 import { fetchQuota, fetchSpecialAmount, fetchUser, fetchVolume } from "./api.mjs"
 import { badgesFromCreditDesc, badgesFromUser } from "./badges.mjs"
@@ -62,17 +62,43 @@ export function buildCreditView(quota, volume, special) {
     privilege,
     special: specialCredit,
     specialDesc: String(special?.credit_desc || ""),
-    specialExpire: String(special?.credit_expire || ""),
+    specialExpire: safeIso(special?.credit_expire),
     unit: "credits",
     resetsAt: nextMonthReset(),
   }
 }
 
-/** 通道说人话。用在「AI 通道」那一行 —— 别等用户发消息才炸。 */
-export function describeTransport(transport) {
+/**
+ * 时间字段的安全解析：解析不了就当没有，**不要**让它抛。
+ *
+ * `credit_expire` 的实测形状没有保证（可能是 ISO，也可能是厂商原样格式或一个裸数字）。
+ * 解析失败如果直接抛，整张卡片会变成「读取失败」—— 而这条时间只影响一行「何时作废」。
+ */
+function safeIso(value) {
+  if (value === null || value === undefined || value === "") return ""
+  try {
+    return toIso(value, "credit_expire") || ""
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * 通道说人话。用在「AI 通道」那一行 —— 别等用户发消息才炸。
+ *
+ * ⚠ 「浏览器授权登录 / 本机 cnb-cli / 粘贴访问令牌」这三条路拿到的都是**访问令牌（PAT）**，
+ *   而 PAT 调不了 AI 端点（上游一律 403 [NO_RIGHT]）。所以要跑模型必须再补一条
+ *   **CNBSESSION**（或配 relay）。这一行就是提前把这件事说清楚的地方 ——
+ *   登录成功 ≠ 能聊天，这个差别必须出现在卡片上，不能只写在 README 里。
+ */
+export function describeTransport(transport, { hasSession = false } = {}) {
   if (transport === "relay") return "中继机（支持 tools）"
-  if (transport === "cookie") return "Cookie 直连（可用）"
-  return "缺 CNBSESSION，点「粘贴访问令牌」补上"
+  if (transport === "cookie") {
+    return hasSession
+      ? "Cookie 直连（可用）；要 tools 请改走 relay"
+      : "只有访问令牌 —— 跑不了模型。点「粘贴访问令牌」把浏览器里的 CNBSESSION 粘进来，或在选项里配 relay"
+  }
+  return "没有可用凭据：先登录（浏览器授权 / 粘贴访问令牌）"
 }
 
 function credits(n) {
@@ -90,13 +116,26 @@ function credits(n) {
  * ⚠ 窗口里**必须至少有一条带 used / balance**，否则 src/quota.mjs 的 `usage()` 会抛：
  *   全是 aside / textOnly 时，这个号在路由页等于不存在（AGENTS 坑 24）。
  */
-export function buildUsage({ credit, badges = [], transport = "none", username = "", org = "" }) {
+export function buildUsage({ credit, badges = [], transport = "none", hasSession = false, username = "", org = "" }) {
   const windows = []
   const plan = (badges || []).map((b) => b.label).filter(Boolean).join(" · ") || "CNB 免费额度"
 
   let routable = false
 
   if (credit.total !== null && credit.used !== null) {
+    // ⚠ 总量 0 是**真实状态**（新组织、额度没发、或者已经用光）：`usageWindow` 会
+    //   因为 `limit > 0` 当场抛，而抛出去用户只看到「读取失败」。这里明确说出为什么，
+    //   并且**不伪造 0%** —— 编一个 0/0 的窗口会让这个号排到路由队首。
+    if (credit.total <= 0) {
+      return {
+        plan,
+        user: username,
+        error:
+          `这个组织本月没有 AI Credit（总量 ${credits(credit.total)}，已用 ${credits(credit.used)}）。` +
+          "免费额度按月发放（每月 1 日 UTC 重置）；如果是新组织，先完成 CNB 的入门任务或者让组织管理员分配额度。",
+        windows: [],
+      }
+    }
     windows.push(
       usageWindow({
         name: "AI Credit（当月）",
@@ -140,7 +179,7 @@ export function buildUsage({ credit, badges = [], transport = "none", username =
       name: "AI 通道",
       used: 0,
       aside: true,
-      display: describeTransport(transport),
+      display: describeTransport(transport, { hasSession }),
     }),
   )
 
@@ -183,7 +222,16 @@ export async function fetchUsageSnapshot({ token, org, signal } = {}) {
     throw error
   }
   if (!org) {
-    const error = upstreamError("没有探测到组织（org）：额度是按组织算的，先重新登录一次或直接在选项里填 org。", 400)
+    // 实测（2026-11-02，当天注册的账号）：`GET /user/groups` 直接返回 `[]`。
+    // 这不是「再登录一次」能好的 —— CNB 的 AI Credit 按**组织**发放，AI 端点也挂在
+    // `/{org}/{repo}/-/ai/...` 下，所以没有组织就既没有额度、也没有通道。
+    // 说清要做什么，别让用户对着「重新登录」反复点。
+    const error = upstreamError(
+      "这个 CNB 账号还没有组织 —— AI Credit 是按组织发放的，AI 端点也挂在 /{org}/{repo} 下。" +
+        "先到 https://cnb.cool/new/groups 建一个（或让组织管理员把你加进去），再回来刷新。" +
+        "已经有组织却显示这条：在插件选项里直接填 org（组织 slug）。",
+      400,
+    )
     error.code = CODES.invalidRequest
     throw error
   }

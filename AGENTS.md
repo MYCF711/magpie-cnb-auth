@@ -189,9 +189,9 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`src/usage-cache.mjs`](./src/usage-cache.mjs) | `createUsageCache` / `read` / `clear` / `publicUsage` / `exhausted` | 额度卡片频繁刷新：成功 60 秒 / 失败 5 秒、同 key 并发合并；无读数时 `exhausted` 必须放行 |
 | [`src/request-rewrite.mjs`](./src/request-rewrite.mjs) | `rewriteJsonBody` / `ensureStreamUsage` / `clampMaxTokens` / `stripModelPrefix` / `stripHopHeaders` | identity 快路径；改 body 后必须去掉 `content-length` / `content-encoding`；工具 schema 不动 |
 | [`src/tool-schema.mjs`](./src/tool-schema.mjs) | `truncateToolName` / `truncateToolNames` / `loosenToolSchema` / `adaptToolList` / `rewriteToolSchema` / `createToolSchemaAdapter` | 工具名超长截断（保持唯一）+ 工具 schema 兼容改写（`additionalProperties` 非布尔→`true`、删 `items:{}`、`items` 子树摊平且不留空 `{}`）；**默认关闭、只作显式 adapter** —— 会放宽用户 schema，与 `request-rewrite.mjs` 的「工具 schema 绝不改」是两套取舍，别同时挂 |
-| [`src/api.mjs`](./src/api.mjs) | `headersFor` / `read` / `get` / `asModelError` / `asSignInExpired` | 错误语义只在一处定义 —— 401 与 404 混用会打死整个账号 |
-| [`src/models.mjs`](./src/models.mjs) | `isUsable` / `priceOf` / `buildModels` / `defaultEntry` | 三态降级 + `free` 三分支，错法都长得像「正常」 |
-| [`src/chat.mjs`](./src/chat.mjs) | `passThrough` / `withUsage` / `singleShotToSSE` / `normalizeUsage` | 流式三坑：读干流、漏 `include_usage`、`stream:false` 不被接受 |
+| [`src/api.mjs`](./src/api.mjs) | `TIMEOUT` / `cnbApi` / `cnbWeb` / `fetchCsrf` / `fetchUser` / `fetchTopGroups` / `listRepos` / `fetchQuota` / `fetchVolume` / `fetchSpecialAmount` | 打 CNB 的那一层：两个域名两套鉴权（`api.cnb.cool` 吃 Bearer，`cnb.cool` 吃 Cookie）。错误语义的**判定**在 `src/http.mjs` 的 `isLoginBroken()` |
+| [`src/models.mjs`](./src/models.mjs) | `buildModels` / `keepUnknownModels` | CNB 没有 `/models` 端点，所以这里不「拉目录」，只按通道把 `toolcall` 标对（cookie → false）。**不标 `free` / `rate`** —— CNB 的模型吃当月 Credit，不是无上限免费 |
+| [`src/chat.mjs`](./src/chat.mjs) | `cleanPayload` / `pickTransport` / `statusForCookie` / `buildCookieFetch` / `buildRelayFetch` / `buildLoaderResult` / `foldSse` | 两条通道 + 三件事：恒以 `stream:true` 调上游、剥掉禁字段、每个错误出口带 status + code |
 | [`src/store.mjs`](./src/store.mjs) | `fileOf` / `readJson` / `writeJson` + 快照 / 登录态 / 一次性标记三件套 | 只写 `~/.cache/magpie`、文件名带账号、原子写、可整目录删 |
 | [`src/quota.mjs`](./src/quota.mjs) | `usageWindow` / `usage` / `toIso` / `QuotaShapeError` | **把「写错不报错、但 GUI 和智能路由会坏」的五类窗口写法变成运行时错误** —— 见下方的表 |
 | [`src/invite.mjs`](./src/invite.mjs) | `createInviteStore` / `inviteHint` / `resolveInvite` / `makeInviteMethod` | 邀请码只能在登录 URL 上带、事后补不了；而 `prompts` 是静态数组，串不起「填码 → 主登录」—— 只有 `ask()` 能 |

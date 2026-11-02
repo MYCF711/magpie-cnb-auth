@@ -164,12 +164,32 @@ POST https://cnb.cool/{org}/{repo}/-/ai/chat/completions
    直接透传会让 magpie 把整个账号标成登录失效。
 4. **不要把流读掉** —— 流式请求的 `response.body` 原样交回去，读了客户端只能看到第一段。
 
-`csrfkey` 缺失时会抓一次首页补上（登录态首页 200KB+，未登录只有几十 KB ——
-这个长度差顺手用来区分「登录过期」和「路径写错」），抓不到就不带，多数请求也能过。
+`csrfkey` 缺失时会抓一次首页补上；抓不到就不带，多数请求也能过。
+
+> **首页长度不能用来判断「登录了没有」**（2026-11-02 实测证伪：未登录的 `/` 是
+> 145,452 字符，而公开仓库页 `/cnb/docs/` 是 227,535 字符 —— 同一个「> 200KB」阈值
+> 会把匿名访问判成已登录）。这个启发式已经从 `src/api.mjs` 里删掉；登录有效性只由
+> 「拿这条 CNBSESSION 真打一次 AI 端点」决定。
+
+**路径写错时上游回的是什么？**（实测 2026-11-02，和直觉不一样）
+
+| 你发的请求 | 上游回 | 插件映射 |
+|---|---|---|
+| 带（或缓存了）`csrfkey`，但 CNBSESSION 无效 | `401 {"errcode":16,"errmsg":"Blocked by CSRF."}`（JSON，**不是 HTML**） | 401 · `session_expired` |
+| 不带 `csrfkey`，才轮到仓库鉴权 | `403 {"errcode":7,"errmsg":"User has no permission."}` | 502 · `upstream_error`（不标账号） |
+
+也就是说：**CSRF 闸在仓库鉴权之前**，假会话根本走不到「路径写错」那一支；
+`text/html` 只在 Cloudflare / 网关拦下来时才出现。所以「仓库路径不对 → 上游回 HTML」
+这句旧结论是错的，已经改掉。
 
 ### 5.2 自建 relay
 
-指向一个 OpenAI 兼容中继，插件只把 `Authorization` 换掉，其余直通。
+指向一个 OpenAI 兼容中继。插件把请求头重构一遍再发，不是「只换 Authorization」：
+
+- **换掉**：`Authorization`（填 `relay.key`）、`User-Agent`（打 CNB 时必需的那一个，缺了会被 Cloudflare 拦）
+- **丢掉**：`host` / `content-length` / `cookie`（这几个必须由运行时重新算）
+- **其余原样透传**：自定义头、`content-type`、工具定义
+
 **这条通道支持工具调用** —— 因为上游是用户自己的网关，不经过 CNB 的 AI 端点。
 
 `auto` 的顺序是 **relay → cookie**：配了 relay 就用 relay。
@@ -192,13 +212,17 @@ POST https://cnb.cool/{org}/{repo}/-/ai/chat/completions
 | 等待超时 / 流被截断 | 504 | `upstream_timeout` | **不许落 502**（不可重试） |
 | 带 tools 打 Cookie 通道 | 501 | `not_implemented` | 结构性不支持，换通道才有救 |
 | 上游给了明确错误体但归不进上面 | 502 | `upstream_error` | 默认桶 |
-| 上游回 HTML | 502 | `upstream_error` | 路径错或登录过期，**不是**模型坏了 |
+| 上游回 HTML | 502 | `upstream_error` | 那是 Cloudflare / 网关页，**不是**模型坏了 |
+| 非登录问题的上游 401 / 403 | 502 | `upstream_error` | 落 401 会让宿主把整个账号摘掉，落 404 会搁置模型 —— 两者都错 |
 
 `isLoginBroken()` 是这里最贵的一个判断：判成「失效」会停账号并 failover 到每一个账号；
 判成「不是」用户就拿着一个看不懂的 403 干瞪眼。判据来自实测：
 
 - `401` —— 只要不是**在说模型问题**，就是登录问题
 - `403` —— 只有明说 `not_logged_in` / `login` / `session` / `csrf` / `登录` 才算
+
+判成「登录失效」之后还要选对**状态码**：只有 `isLoginBroken()` 为真才落 `401`；
+其余 401 / 403 一律落 `502 upstream_error`（实现是 `src/chat.mjs` 的 `statusForCookie()`）。
 
 ---
 
@@ -229,5 +253,22 @@ POST https://cnb.cool/{org}/{repo}/-/ai/chat/completions
    徽章只从 `GET /user` 的 `identity_providers` 与特权额度说明里推。
 4. **上下文窗口取自参考实现的实测表**，本仓库没有重新做长上下文压测。
    如果你发现某个模型实际窗口不同，改 `src/context.mjs` 的 `MODEL_SPECS` 即可（测试会跟着走）。
-5. **没有真实的 CNB 账号做端到端验证**（见提交说明）：结构、协议形状、错误映射、
-   额度窗口都覆盖了离线测试；真机登录需要你点一次浏览器授权。
+5. **真实链路验证做到哪一步**（详见 [`live-verification.md`](./live-verification.md)）：
+   本机 magpie 用隔离的配置目录（`HOME` 覆盖，不碰你自己的 `~/.config/magpie`）装载过本插件，
+   `magpie plugin add <本仓库路径>` → `cnb (云原生构建 CNB, 8 models)`；设备码登录**真的走完了**
+   （`magpie plugin login cnb` 领到 `user_code`，授权确认后 `signed in as Tlaloc`），
+   `magpie quota` / `magpie provider test cnb` 都按插件的预期回答。
+   **没做到的**：这条账号没有组织，所以额度三接口的成功读数、Cookie 通道发真实消息这两段
+   只有离线测试与错误映射实测，没有真读数 —— 等你有组织后跑一次 `magpie quota` 就能补上。
+6. **全新账号可能一个组织都没有。** 实测（2026-11-02，当天注册的账号）：`GET /user/groups`
+   返回 `[]`。CNB 的 AI Credit 按组织发放、AI 端点也挂在 `/{org}/{repo}/-/ai/...` 下，
+   所以这种账号既没有额度可读、也没有通道可用 —— 卡片会直接给出 `cnb.cool/new/groups` 的入口，
+   而不是让你反复「重新登录」。
+7. **只拿到「免费额度」而拿不到「总量」时，窗口是钱包型（只有 `balance`、没有 `used`）。**
+   这种窗口 magpie 的卡片会照常显示，但**智能路由不计入它**（AGENTS 坑 24：路由只看 `used`）。
+   没有总量就没有分母，硬编一个占比是假数据 —— 所以这里选择「显示余额、不参与排序」。
+   正常账号三个接口都会返回 `total`，走不到这条。
+8. **包里带着脚手架的通用模块**（`oauth-pkce` / `browser-login` / `desktop-import` /
+   `invite` / `rotation-captcha` / `tool-schema` / `request-rewrite` / `vision-clock` /
+   `tempmail-client` / `store` / `model-context` / `local-browser`）。CNB 这个供应商用不到它们，
+   但它们是脚手架的一致契约、并有各自的测试。**将来接别的站点时按需用，别以为删除是「清理」。**

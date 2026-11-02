@@ -422,3 +422,241 @@ test("claim 返回体：已领过 / 验证码 / 成功 各自落到正确的 out
   assert.equal(ok.streak, 3)
   assert.equal(interpretClaim({ errmsg: "no" }, 401).outcome, "ineligible")
 })
+
+// ── 错误语义：模型级失败不许打死账号（脚手架坑 6）────────────────────
+
+test("模型级 404 原样透出，且不标登录失效", async () => {
+  const pluginFetch = buildCookieFetch({
+    getAuth: async () => ({ type: "api", key: SESSION }),
+    options: normaliseOptions({ repo: "acme/code" }),
+  })
+  await withFetch(
+    async () =>
+      new Response(JSON.stringify({ errcode: 404, errmsg: "Resource not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    async () => {
+      const res = await pluginFetch("https://cnb.cool/acme/code/-/ai/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "nope", stream: false }),
+      })
+      assert.equal(res.status, 404, "只搁置这个模型")
+      assert.equal((await res.json()).error.code, "model_not_found")
+      assert.equal(res.headers.get("x-magpie-sign-in"), null, "不许标账号 —— 那会停掉整个账号")
+    },
+  )
+})
+
+test("上游 403「Agent calls are not allowed」不被当成登录失效", async () => {
+  const pluginFetch = buildCookieFetch({
+    getAuth: async () => ({ type: "api", key: SESSION }),
+    options: normaliseOptions({ repo: "acme/code" }),
+  })
+  await withFetch(
+    async () =>
+      new Response(JSON.stringify({ errmsg: "Agent calls are not allowed" }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      }),
+    async () => {
+      const res = await pluginFetch("https://cnb.cool/acme/code/-/ai/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "glm-5.3", stream: false }),
+      })
+      assert.notEqual(res.status, 404, "这不是「模型不存在」")
+      assert.equal(res.headers.get("x-magpie-sign-in"), null, "403 + agent 文案 ≠ 登录失效")
+    },
+  )
+})
+
+test("401 Blocked by CSRF：先补 csrf 重发，别把一次抓取失败当成要重新登录", async () => {
+  let aiCalls = 0
+  let homeCalls = 0
+  const pluginFetch = buildCookieFetch({
+    getAuth: async () => ({ type: "api", key: SESSION }),
+    options: normaliseOptions({ repo: "acme/code" }),
+  })
+
+  await withFetch(
+    async (url) => {
+      if (String(url).endsWith("/")) {
+        // 抓首页：每次给一个不同的 csrfkey，模拟「第一次抓到的已经过期」
+        homeCalls += 1
+        return new Response("<html>ok</html>", {
+          status: 200,
+          headers: { "content-type": "text/html", "set-cookie": `csrfkey=k${homeCalls}; Path=/; HttpOnly` },
+        })
+      }
+      aiCalls += 1
+      if (aiCalls === 1) {
+        return new Response(JSON.stringify({ errmsg: "Blocked by CSRF." }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      return sseResponse('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+    },
+    async () => {
+      const res = await pluginFetch("https://cnb.cool/acme/code/-/ai/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "deepseek-v4.1-flash", stream: false }),
+      })
+      assert.equal(res.status, 200, "补到新的 csrf 之后必须能过")
+      assert.equal((await res.json()).choices[0].message.content, "ok")
+      assert.equal(aiCalls, 2, "应该正好重发一次")
+    },
+  )
+})
+
+// ── 免费声明：不标 free，也不从 rate 反推（脚手架坑 2）────────────────
+
+test("模型条目上没有 free / rate：CNB 的模型吃当月 Credit，不是无上限免费", async () => {
+  const { buildModels } = await import("../src/models.mjs")
+  for (const transport of ["none", "cookie", "relay"]) {
+    const models = buildModels({}, { transport })
+    for (const [id, model] of Object.entries(models)) {
+      assert.equal("free" in model, false, `${id}: 不许标 free（Free-first 会一直派发它）`)
+      assert.equal("rate" in model, false, `${id}: 不许从 rate 反推免费`)
+    }
+  }
+})
+
+// ── 账号名：昵称优先，`cnb.xxxx` 不是名字（真实证据：2026-11-02 当天注册的账号）──
+
+test("displayNameOf：昵称优先；自动生成的 cnb.xxx 用户名不当名字", async () => {
+  const { displayNameOf, isAutoUsername } = await import("../src/credential.mjs")
+  assert.equal(displayNameOf({ username: "cnb.dI2DzHg0QHA", nickname: "Tlaloc" }), "Tlaloc")
+  assert.equal(displayNameOf({ username: "cnb.dI2DzHg0QHA", nickname: "" }), "", "自动用户名不是名字")
+  assert.equal(displayNameOf({ username: "mycf711" }), "mycf711", "用户自己起的用户名可以用")
+  assert.equal(displayNameOf({ username: "iam::00000000:user:hw0000" }), "", "内部 ID 不是名字")
+  assert.equal(displayNameOf(null), "")
+  assert.equal(isAutoUsername("cnb.dI2DzHg0QHA"), true)
+  assert.equal(isAutoUsername("mycf711"), false)
+})
+
+test("accountNameOf：老账号里已经存下的 cnb.xxxx 也不再当名字显示", async () => {
+  const { accountNameOf } = await import("../src/credential.mjs")
+  assert.equal(accountNameOf({ nickname: "Tlaloc", username: "cnb.x" }), "Tlaloc")
+  assert.equal(accountNameOf({ username: "cnb.dI2DzHg0QHA" }, { accountId: "cnb.dI2DzHg0QHA" }), "")
+  assert.equal(accountNameOf({ username: "mycf711" }), "mycf711")
+})
+
+test("没有组织要说「去建一个」，不是「再登录一次」", async () => {
+  const { fetchUsageSnapshot } = await import("../src/usage.mjs")
+  const err = await fetchUsageSnapshot({ token: PAT, org: "" }).catch((e) => e)
+  assert.equal(err.status, 400)
+  assert.match(err.message, /还没有组织/)
+  assert.match(err.message, /new\/groups/, "要给一个能点的地址")
+  assert.doesNotMatch(err.message, /重新登录/, "重新登录治不了「没有组织」")
+})
+
+test("resolveAccount：groups 为空 ⇒ noOrg 为真，且没有仓库路径", async () => {
+  const { resolveAccount } = await import("../src/credential.mjs")
+  const account = resolveAccount(
+    { type: "api", key: SESSION, metadata: { org: "", groups: [] } },
+    normaliseOptions({}),
+  )
+  assert.equal(account.noOrg, true)
+  assert.equal(account.org, "")
+  assert.equal(account.repo, "", "没有组织就没有仓库路径")
+})
+
+// ── 通道判定与错误映射：别让「有 PAT 没 session」变成宿主眼里的 404 ──────────
+
+test("pickTransport：只有 PAT（没有 CNBSESSION）也要走 cookie 通道，不能返回 none", () => {
+  const patOnly = { raw: PAT, kind: "pat", token: PAT, session: "" }
+  assert.equal(pickTransport(patOnly, normaliseOptions({})), "cookie", "有凭据就得有人给出准确的话")
+  assert.equal(pickTransport(patOnly, normaliseOptions({ transport: "cookie" })), "cookie")
+  assert.equal(pickTransport(patOnly, normaliseOptions({ transport: "relay" })), "none", "点名 relay 却没填 url")
+  assert.equal(pickTransport({}, normaliseOptions({})), "none", "一条凭据都没有才是 none")
+})
+
+test("pickTransport：没凭据时不能因为 transport=cookie 就假装有通道", () => {
+  assert.equal(pickTransport({ session: "" }, normaliseOptions({ transport: "cookie" })), "none")
+})
+
+test("statusForCookie：登录失效才 401；非登录的 401/403 落 502；HTML 落 502", async () => {
+  const { statusForCookie } = await import("../src/chat.mjs")
+  assert.equal(statusForCookie(401, { loginBroken: true }), 401, "真失效 → 让宿主摘号")
+  assert.equal(statusForCookie(401, { loginBroken: false }), 502, "非登录 401 不许标账号")
+  assert.equal(statusForCookie(403, { loginBroken: true }), 401, "登录类 403（csrf/未登录）等价于失效")
+  assert.equal(statusForCookie(403, { loginBroken: false }), 502, "403 没有宿主语义，进默认桶")
+  assert.equal(statusForCookie(200, { htmlInstead: true }), 502, "HTML 不是业务错误体")
+  assert.equal(statusForCookie(404, { loginBroken: false }), 404, "模型不存在仍然只搁置这个模型")
+  assert.equal(statusForCookie(503, { loginBroken: false }), 503, "上游 5xx 是「重试有意义」")
+})
+
+test("buildUsage：额度总量 0 要说清原因，不能抛、也不能伪造 0%", () => {
+  const usage = buildUsage({
+    credit: { total: 0, free: 0, used: 0, frozen: null, privilege: null, special: null, specialDesc: "", specialExpire: "", unit: "credits", resetsAt: nextMonthReset() },
+    transport: "cookie",
+    hasSession: false,
+    org: "acme",
+  })
+  assert.deepEqual(usage.windows, [], "没有读数就不给窗口，否则 0/0 会排到路由队首")
+  assert.match(usage.error, /没有 AI Credit/)
+})
+
+test("buildUsage：总量 >0 时 used/limit 都落到窗口上", () => {
+  const usage = buildUsage({
+    credit: { total: 500, free: 500, used: 120, frozen: null, privilege: 0, special: null, specialDesc: "", specialExpire: "", unit: "credits", resetsAt: nextMonthReset() },
+    transport: "cookie",
+    hasSession: true,
+  })
+  const main = usage.windows.find((w) => w.name === "AI Credit（当月）")
+  assert.equal(main.amount, 120)
+  assert.equal(main.limit, 500)
+  assert.ok(Number.isFinite(main.used), "used 必须是有限数字（路由要读它）")
+})
+
+test("AI 通道那一行：只有 PAT 时明说跑不了模型", () => {
+  const base = {
+    total: 500, free: 500, used: 10, frozen: null, privilege: 0,
+    special: null, specialDesc: "", specialExpire: "", unit: "credits", resetsAt: nextMonthReset(),
+  }
+  const without = buildUsage({ credit: base, transport: "cookie", hasSession: false })
+  const withIt = buildUsage({ credit: base, transport: "cookie", hasSession: true })
+  const line = (u) => u.windows.find((w) => w.name === "AI 通道").display
+  assert.match(line(without), /跑不了模型/)
+  assert.match(line(without), /CNBSESSION/)
+  assert.match(line(withIt), /可用/)
+})
+
+test("loader：点名 relay 却没填 url 时给出 400，而不是让宿主拿去拼 404", async () => {
+  const { buildLoaderResult } = await import("../src/chat.mjs")
+  const result = await buildLoaderResult({
+    getAuth: async () => ({ type: "api", key: SESSION }),
+    options: normaliseOptions({ transport: "relay", relay: { url: "" } }),
+  })
+  assert.equal(typeof result.fetch, "function", "必须有 fetch —— 返回 {} 会让宿主拿 provider.api 去拼一条不存在的路径")
+  const res = await result.fetch("https://cnb.cool/chat/completions", { method: "POST", body: "{}" })
+  assert.equal(res.status, 400)
+  const body = await res.json()
+  assert.equal(body.error.code, "invalid_request")
+  assert.match(body.error.message, /relay\.url/)
+})
+
+test("loader：只有 PAT 时也给出 fetch（由 cookie 通道说清缺 CNBSESSION）", async () => {
+  const { buildLoaderResult } = await import("../src/chat.mjs")
+  const result = await buildLoaderResult({
+    getAuth: async () => ({ type: "api", key: PAT }),
+    options: normaliseOptions({ repo: "acme/code" }),
+  })
+  assert.equal(typeof result.fetch, "function")
+  await withFetch(
+    async () =>
+      new Response(JSON.stringify({ errcode: 16, errmsg: "The task will not run because the user is not logged in." }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    async () => {
+      // 打 /user 识别凭据：假 PAT 会 401 → 识别失败 → 但错误必须是「凭证无效」，不是 404
+      const res = await result.fetch("https://cnb.cool/acme/code/-/ai/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "deepseek-v4.1-flash" }),
+      })
+      assert.ok([400, 401, 502].includes(res.status), `不该是宿主默认的 404，实际 ${res.status}`)
+    },
+  )
+})

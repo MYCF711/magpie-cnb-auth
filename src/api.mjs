@@ -162,8 +162,11 @@ export async function cnbWeb(path, { session, csrfkey, method = "GET", body, sig
 /**
  * 抓一次首页，拿 csrftoken 与 csrfkey。
  *
- * 判据：登录态首页 200KB+（含工作区数据），未登录只有几十 KB —— 所以
- * `looksLoggedIn` 是个够用的粗略判据，用来区分「CNBSESSION 过期」和「仓库路径写错」。
+ * ⚠ 这里**不做「登录了没有」的判断**。曾经用「首页 HTML > 200KB = 已登录」当判据，
+ *   2026-11-02 实测把它证伪了：未登录的 `/` 是 145,452 字符，而**公开仓库页**
+ *   `/cnb/docs/` 是 227,535 字符 —— 同一个阈值会把匿名访问判成已登录。
+ *   登录有效性的真正判据只有一个：拿这条 CNBSESSION 去打 AI 端点，看上头怎么回
+ *   （见 `src/chat.mjs` 的 `isLoginBroken()`）。这里只负责把 csrf 令牌取回来。
  */
 export async function fetchCsrf({ session, signal } = {}) {
   const response = await cnbWeb("/", { session, signal, timeoutMs: TIMEOUT.list })
@@ -179,5 +182,5 @@ export async function fetchCsrf({ session, signal } = {}) {
     const m = /(?:^|\s)csrfkey=([^;]+)/.exec(raw)
     if (m) csrfkey = m[1]
   }
-  return { csrfToken, csrfkey, htmlLength: html.length, looksLoggedIn: html.length > 200_000 }
+  return { csrfToken, csrfkey, htmlLength: html.length }
 }
