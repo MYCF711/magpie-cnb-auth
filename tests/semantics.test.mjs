@@ -22,7 +22,7 @@ import {
   statusForUpstream,
   wantsTools,
 } from "../src/chat.mjs"
-import { describeCredentialShape, explainCredentialShape, identifyCredential, shapeKind } from "../src/credential.mjs"
+import { describeCredentialShape, explainCredentialShape, identifyCredential, resolveAccount, shapeKind } from "../src/credential.mjs"
 import { buildCreditView, buildUsage, milliToCredit, nextMonthReset, numberOrNull } from "../src/usage.mjs"
 import { badgesFromCreditDesc, badgesFromUser, planOf } from "../src/badges.mjs"
 import { pollDeviceToken, refreshAccessToken, requestDeviceCode } from "../src/device.mjs"
@@ -659,4 +659,26 @@ test("loader：只有 PAT 时也给出 fetch（由 cookie 通道说清缺 CNBSES
       assert.ok([400, 401, 502].includes(res.status), `不该是宿主默认的 404，实际 ${res.status}`)
     },
   )
+})
+
+test("续期之后（合并结果）通道仍然是 cookie —— metadata.session 不能被冲掉", async () => {
+  // auth.refresh 只返回 { access, refresh, expires }，宿主会把它们**合并**进旧记录。
+  // 这里锁的是合并之后的形状：新的 PAT + 旧的 metadata.session，两条都还得在。
+  const merged = {
+    type: "oauth",
+    access: PAT,
+    refresh: "r",
+    expires: Date.now() + 3600e3,
+    metadata: { kind: "pat", session: SESSION, server: "cnb.cool" },
+  }
+  const account = resolveAccount(merged, {})
+  assert.equal(account.kind, "pat", "有 PAT 就是 PAT —— 额度得用它查")
+  assert.equal(account.session, SESSION, "续期不能把 CNBSESSION 冲掉，否则模型通道会在某天悄悄失效")
+  assert.equal(pickTransport(account, {}), "cookie", "两条都在时走 cookie 通道")
+
+  const pureSession = { type: "oauth", access: SESSION, metadata: { kind: "session", session: SESSION } }
+  const s = resolveAccount(pureSession, {})
+  assert.equal(s.kind, "session")
+  assert.equal(s.token, "", "纯 session 不能把会话当成 PAT 去查额度（那必然 401）")
+  assert.equal(pickTransport(s, {}), "cookie")
 })
