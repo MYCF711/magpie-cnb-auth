@@ -1,0 +1,179 @@
+// 共享上下文 —— 框里所有小插头都读这一份
+//
+// ⚠ 改这里，不要改各个 hook 文件里的常量。
+//   针脚模块只关心「怎么填这一个针脚」，厂商信息全在这儿。
+
+/** 厂商 id：agent 用 `<id>/<model>` 命名，改完全世界都要跟着改 */
+export const PROVIDER = "cnb"
+
+/** 卡片上显示的供应商名：必须 <中文> <English>，英文照抄厂商官方品牌写法 */
+export const PROVIDER_NAME = "云原生构建 CNB"
+
+/** 上游 API 基址（CNB 的 AI 通道挂在网页域下，不是 api.cnb.cool） */
+export const BASE = "https://cnb.cool"
+
+/**
+ * 决定 API 形状，别乱选：
+ *   @ai-sdk/anthropic         → Anthropic Messages  /messages
+ *   @ai-sdk/openai            → OpenAI Responses    /responses
+ *   @ai-sdk/google            → Gemini              /models/<id>:streamGenerateContent
+ *   @ai-sdk/openai-compatible → Chat completions    /chat/completions
+ *
+ * CNB 的 AI 端点就是 OpenAI Chat 形状，而且**只吃 stream:true**
+ * （非流式直接回业务码 11101）—— 客户端要非流式时由 src/chat.mjs 折叠 SSE。
+ */
+export const SDK = "@ai-sdk/openai-compatible"
+
+/** api_key 只活几分钟/几小时时，提前多久换 */
+export const REFRESH_LEAD_MS = 5 * 60_000
+
+// ── 域名与端点 ────────────────────────────────────────────────────────
+//
+// 两个站点是两套鉴权，别混：
+//   cnb.cool      网页域：Cookie（CNBSESSION）+ Csrftoken → AI 通道、网页侧动作
+//   api.cnb.cool  OpenAPI：Authorization: Bearer <PAT> → 用户 / 组织 / 额度
+//
+// 实测（2026-11-02）：PAT 调不了模型 —— api.cnb.cool 的 AI 路径一律
+//   403 {"errcode":403,"errmsg":"[NO_RIGHT]OpenAPI only allowed in pipeline"}
+// 所以「跑模型」只有两条路：CNB 网页登录态，或自建中继（见 src/chat.mjs）。
+
+export const WEB_BASE = "https://cnb.cool"
+export const API_BASE = "https://api.cnb.cool"
+
+/** OAuth Device Flow —— 与 cnb-cli 的 `cnb login` 同一套参数 */
+export const OAUTH_DEVICE_URL = `${WEB_BASE}/oauth2/device/auth`
+export const OAUTH_TOKEN_URL = `${WEB_BASE}/oauth2/token`
+export const OAUTH_CLIENT_ID = "cnb_cli"
+
+/** CNB 目前真在干活的默认模型 */
+export const DEFAULT_MODEL = "deepseek-v4.1-flash"
+
+export const PLUGIN_VERSION = "0.1.0"
+
+/**
+ * 所有请求都必须带 UA —— 缺了会被 Cloudflare 判 bot，回
+ * `403 Error 1010 browser_signature_banned`，而且错误体是 HTML，看不出是 UA 的锅。
+ */
+export const USER_AGENT = `magpie-cnb-auth/${PLUGIN_VERSION}`
+
+/** 控制台路由（从 cnb.cool 前端 bundle 里抓到的真实路径，别改） */
+export const ROUTES = Object.freeze({
+  token: `${WEB_BASE}/profile/token`, // 访问令牌管理
+  profile: `${WEB_BASE}/profile`,
+  identity: `${WEB_BASE}/user/identity`, // 实名认证
+  extIdentity: `${WEB_BASE}/user/ext_identity`, // 扩展身份：高校 / 天才 / TDP
+  extIdentityPrivilege: `${WEB_BASE}/user/charge/ext_identity/privilege`, // 认证特权额度
+  quota: `${WEB_BASE}/user/quota`, // 额度总览
+  newRepo: `${WEB_BASE}/new/repos`,
+  deviceVerify: `${WEB_BASE}/oauth2/device/verify`,
+})
+
+/**
+ * 图标 —— **两处必须一致**，缺一份就有地方显示灰方块：
+ *   auth.icon（本文件导出）  → 供应商列表那一行、用量概览的卡
+ *   package.json 的 magpie.icon → 插件列表那一行、插件详情页左上角
+ * 见 HOOKS.md「插件自己的图标」。
+ */
+export const ICON =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiMyZjZiZmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMwMGMyYTgiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHJ4PSIxNCIgZmlsbD0idXJsKCNnKSIvPjxwYXRoIGQ9Ik0xOCA0MlYyMmg2bDggMTIgOC0xMmg2djIwaC02VjMybC04IDExLTgtMTF2MTB6IiBmaWxsPSIjZmZmIiBvcGFjaXR5PSIuOTUiLz48L3N2Zz4="
+
+// ── 模型表 ────────────────────────────────────────────────────────────
+//
+// ⚠ context 必须实测，不要凭印象填。这个数字会被转给 agent（DSH 等），
+//   决定它什么时候压缩对话：填小了浪费容量、还会把路由组整体的窗口拉低；
+//   填大了 agent 以为有余量，请求超了上游才报错。
+//   别把「最大输出」当「上下文」—— DeepSeek 系常见 128K 输出 / 1M 上下文。
+//
+// CNB **没有**公开的 `/models` 端点：这份目录就是它的全部（8 个），
+// 不是「拉取失败时的兜底」。
+//
+// ⚠ 关于「谁是主模型」：参考实现 `opencode-cnb-account` 的源码注释里有一句
+//   「CNB 实际只有 deepseek-v4.1-flash 在真干活，其余是静默 fallback 别名」。
+//   那是**作者注释，没有附实测记录**，README 里也没有这句。所以本插件不据此做任何
+//   别名重写（`model` 原样透传）—— 如果上游真在做静默回退，那也是服务端行为，
+//   客户端改不了，硬写一张映射表只会让用户以为切了模型。
+//
+// 字段：id / 显示名 / context / output / reasoning(可省) / image(可省)
+export const MODEL_SPECS = Object.freeze([
+  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", context: 1_000_000, output: 64_000 },
+  { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", context: 1_000_000, output: 64_000 },
+  { id: "glm-5.3", name: "GLM 5.3", context: 1_000_000, output: 64_000, reasoning: true },
+  { id: "glm-5.3-flash", name: "GLM 5.3 Flash", context: 1_000_000, output: 131_072, reasoning: true },
+  { id: "glm-5.3-flash-vision", name: "GLM 5.3 Flash Vision", context: 1_000_000, output: 32_000, image: true },
+  { id: "glm-5.2", name: "GLM 5.2", context: 200_000, output: 32_000 },
+  { id: "kimi-k3", name: "Kimi K3", context: 1_000_000, output: 32_000, reasoning: true },
+  { id: "hy4-preview", name: "Hunyuan 4 Preview", context: 1_000_000, output: 64_000, reasoning: true },
+])
+
+/** 登录前还不知道走哪条通道，先乐观地写 true；登录后由 src/models.mjs 按通道纠正 */
+export const TOOLS_BEFORE_LOGIN = true
+
+/**
+ * 造一条模型条目。
+ *
+ * ⚠ `capabilities` 与 `modalities` 两个都写：
+ *   config 钩子的静态模型走 `modalities`，provider.models 路径走 `capabilities.input`。
+ *   只写一边，另一边就看不到模态。
+ *
+ * ⚠ HOOKS 坑 25：`capabilities.input.image` 必须是**布尔**。省略不等于 text ——
+ *   宿主会拿 models.dev 的同名裸 id 投票补，别家标过 image 就会被带成能收图。
+ *
+ * ⚠ 没有 `free: true`：CNB 的模型吃当月 Credit，不是「列表价 $0 的无上限免费」。
+ *   标成 free 会让 Free-first 一直派发它们（HOOKS 坑 2）。
+ */
+export function modelEntry(spec, { toolcall = TOOLS_BEFORE_LOGIN } = {}) {
+  const vision = Boolean(spec.image)
+  const reasoning = Boolean(spec.reasoning)
+  const tool = Boolean(toolcall)
+  return {
+    id: spec.id,
+    name: spec.name,
+    api: { id: spec.id, url: WEB_BASE, npm: SDK },
+    status: "active",
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: spec.context, output: spec.output },
+    modalities: { input: vision ? ["text", "image"] : ["text"], output: ["text"] },
+    capabilities: {
+      temperature: true,
+      reasoning,
+      toolcall: tool,
+      attachment: vision,
+      // 五个模态键必须显式写布尔（HOOKS 十一之三）
+      input: { text: true, image: vision, audio: false, video: false, pdf: false },
+      output: { text: true },
+    },
+    // config 路径（官方 #quick 示例）用的是带下划线的 tool_call，两个都写，别猜哪个是对的
+    tool_call: tool,
+    attachment: vision,
+    reasoning,
+  }
+}
+
+/** 静态模型表（未登录 / 通道未知时的兜底，必须有内容 —— 铁律 1） */
+export function staticModels({ toolcall = TOOLS_BEFORE_LOGIN } = {}) {
+  const out = {}
+  for (const spec of MODEL_SPECS) out[spec.id] = modelEntry(spec, { toolcall })
+  return out
+}
+
+/** 框里所有小插头拿到的同一份上下文 */
+export const ctx = {
+  PROVIDER,
+  PROVIDER_NAME,
+  BASE,
+  SDK,
+  ICON,
+  REFRESH_LEAD_MS,
+  WEB_BASE,
+  API_BASE,
+  OAUTH_DEVICE_URL,
+  OAUTH_TOKEN_URL,
+  OAUTH_CLIENT_ID,
+  DEFAULT_MODEL,
+  USER_AGENT,
+  ROUTES,
+  MODEL_SPECS,
+  TOOLS_BEFORE_LOGIN,
+  modelEntry,
+  staticModels,
+}

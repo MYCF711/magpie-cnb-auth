@@ -1,0 +1,72 @@
+{
+  "name": "magpie-cnb-auth",
+  "version": "0.1.0",
+  "description": "magpie / OpenCode provider plugin for 云原生构建 CNB (cnb.cool): browser device-flow login, monthly AI Credit quota card, and a CNB-cookie or self-hosted-relay AI channel — no API key to paste.",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "src",
+    "docs",
+    "README.md",
+    "README-TEMPLATE.md",
+    "AGENTS.md",
+    "CHECKLIST.md",
+    "HOOKS.md",
+    "UPDATING.md",
+    "CHANGELOG.md",
+    "MULTI-PROVIDER.md",
+    "NOTICE.md",
+    "LICENSE",
+    "extract-contract.py",
+    "registry-entry.json",
+    "tests",
+    "scripts",
+    "examples",
+    "ERROR-CODES.md",
+    "GUIDE.md",
+    "OFFICIAL-SOURCES.md",
+    "SCORING.md",
+    "CONTRIBUTING.md"
+  ],
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "opencode",
+    "opencode-plugin",
+    "opencode-auth",
+    "provider",
+    "cnb",
+    "cnb.cool",
+    "cloud-native-build",
+    "checkin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MYCF711/magpie-cnb-auth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MYCF711/magpie-cnb-auth/issues"
+  },
+  "homepage": "https://github.com/MYCF711/magpie-cnb-auth#readme",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "magpie": {
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiMyZjZiZmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMwMGMyYTgiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHJ4PSIxNCIgZmlsbD0idXJsKCNnKSIvPjxwYXRoIGQ9Ik0xOCA0MlYyMmg2bDggMTIgOC0xMmg2djIwaC02VjMybC04IDExLTgtMTF2MTB6IiBmaWxsPSIjZmZmIiBvcGFjaXR5PSIuOTUiLz48L3N2Zz4=",
+    "maxConcurrency": 4,
+    "name": "云原生构建 CNB"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check.mjs",
+    "check:errors": "node scripts/check-error-codes.mjs .",
+    "create": "node scripts/create.mjs",
+    "release": "node scripts/release.mjs",
+    "score": "node scripts/score.mjs",
+    "maintenance": "node scripts/check-maintenance.mjs",
+    "publish:npm": "node scripts/publish-npm.mjs"
+  }
+}

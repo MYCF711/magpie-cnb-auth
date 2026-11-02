@@ -1,0 +1,11 @@
+{
+  "package": "magpie-cnb-auth",
+  "name": "云原生构建 CNB",
+  "providers": [
+    "cnb"
+  ],
+  "summary": {
+    "en": "Sign in to CNB (cnb.cool) with a browser device code, see your monthly AI Credit and identity badges, and run DeepSeek / GLM / Kimi through the CNB AI endpoint or your own relay.",
+    "zh": "用浏览器设备码登录 CNB（cnb.cool），在 magpie 里看当月 AI Credit 与认证徽章，并通过 CNB 的 AI 端点或自建中继跑 DeepSeek / GLM / Kimi。"
+  }
+}

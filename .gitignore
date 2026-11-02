@@ -1,0 +1,9 @@
+node_modules/
+*.tgz
+*.log
+.DS_Store
+_*.mjs
+magpie-plugin-contract-full.txt
+
+# 会话棋谱（本地参考，体积大，不进包也不进仓库）
+kifu/

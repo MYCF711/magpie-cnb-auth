@@ -1,0 +1,46 @@
+name: magpie plugin check
+description: Run magpie-plugin-scaffold's rule check against a provider plugin in this workspace. Exit code 0 = compliant.
+author: MYCF711
+
+# 用法（在一个供应商插件仓库里）：
+#
+#   - uses: actions/checkout@v4
+#   - uses: MYCF711/magpie-plugin-scaffold/.github/actions/check@v0.3.6
+#     with:
+#       target: .
+#
+# 复合动作直接跑动作仓库里的 scripts/check.mjs，不下载 npm 包、不装依赖，
+# 也不需要被检查的仓库先克隆模板。它只读目标目录，不写任何文件。
+# 派生项目用默认的 template: false —— 显示名/provider name 还是「未命名」占位符就失败。
+# 只有脚手架自身（CI 自测）才传 template: true。
+
+inputs:
+  target:
+    description: "被检查的插件目录，相对工作区的路径"
+    required: false
+    default: "."
+  node-version:
+    description: "Node 版本；检查脚本只用 node: 内置模块，22 或 24 都可"
+    required: false
+    default: "22"
+  template:
+    description: "仅脚手架自身用；true 时允许「未命名」占位符"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: magpie plugin check
+      shell: bash
+      working-directory: ${{ inputs.target }}
+      run: |
+        if [ "${{ inputs.template }}" = "true" ]; then
+          node "$GITHUB_ACTION_PATH/../../../scripts/check.mjs" --template .
+        else
+          node "$GITHUB_ACTION_PATH/../../../scripts/check.mjs" .
+        fi
