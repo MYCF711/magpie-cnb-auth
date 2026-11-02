@@ -15,7 +15,7 @@
 
 import { spawn } from "node:child_process"
 import { existsSync, rmSync } from "node:fs"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readdirSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createServer } from "node:net"
@@ -271,6 +271,30 @@ export async function pollCookies({
 }
 
 /**
+ * 清掉上次被强杀时留下的临时 profile。
+ *
+ * `cleanup()` 写在 finally 里，但进程被 `taskkill` / `timeout` 硬杀时 finally 不会跑，
+ * 于是 `magpie-login-*` 目录会一直堆在临时目录里（实测一次会话就留下 4 个）。
+ * 这里在每次开窗前顺手扫一遍：**只删超过 6 小时的**，正在用的那个不可能有这个年纪。
+ *
+ * 不抛错 —— 清理失败不该拦住登录。
+ */
+function sweepStaleProfiles({ maxAgeMs = 6 * 60 * 60 * 1000 } = {}) {
+  try {
+    const dir = tmpdir()
+    const now = Date.now()
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith("magpie-login-")) continue
+      const full = join(dir, name)
+      try {
+        if (now - statSync(full).mtimeMs < maxAgeMs) continue
+        rmSync(full, { recursive: true, force: true })
+      } catch {}
+    }
+  } catch {}
+}
+
+/**
  * 打开受控浏览器，等用户登录，返回需要的 Cookie。
  *
  * @param {object} o
@@ -287,6 +311,7 @@ export async function pollCookies({
  */
 export async function chromiumLogin({ browser, url, cookieNames = [], timeoutMs = 5 * 60_000, signal, waitFor }) {
   if (!browser?.path) throw new Error("没有可用的 Chromium 浏览器")
+  sweepStaleProfiles()
   const profile = mkdtempSync(join(tmpdir(), "magpie-login-"))
   const port = await freePort()
   const child = spawn(browser.path, [

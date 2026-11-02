@@ -670,3 +670,26 @@ case c（仓库路径 cnb/no-such-repo-live-probe）→ 上游 404 → 插件原
 `normaliseOptions()` 是插件选项的白名单，`createOrg` 一开始没被加进去 ——
 于是 `options.createOrg === true` 永远是 `false`，「默认关闭」实际变成了「永远关闭」，
 而症状是**没有任何报错**。已补进白名单并加了测试（含「字符串 `"true"` 不算」）。
+
+### 8.10 「开的是你的浏览器程序」和「用的是你的登录态」是两件事
+
+第 4 条登录路会打开你**本机装的那个** Chromium 内核浏览器（`findBrowser()` 按
+Chrome → 国产 Chromium → Edge 的顺序找**已装的程序**，跟系统「默认浏览器」设置无关；
+本机只装了 Edge，所以开出来是 Edge）。但**会话是隔离的** —— 每一次登录都新建一个空 profile：
+
+```
+用的浏览器程序: msedge
+每次登录新建的 profile 目录: C:\Users\<user>\AppData\Local\Temp\magpie-login-sffQY1
+窗口里的 URL:  /?s_url=https%3A%2F%2Fcnb.cool%2Foauth2%2Fdevice%2Fverify%3Fuser_code%3DISOLAT1
+这个窗口里 cnb.cool 的 Cookie: csrfkey          ← 只有这一个
+有没有 CNBSESSION: 没有 ✅                        ← 没继承你任何登录态
+被重定向到登录页了吗: 是（未登录的匿名视图）✅
+profile 目录还在吗: 已删除 ✅
+```
+
+**判据不是「窗口长什么样」，而是「这个窗口里有没有 CNBSESSION」。** 没有，而且被重定向到
+`/?s_url=…`（匿名视图），说明它对你的 cookie / localStorage / 登录状态一无所知。
+
+顺带修了一个残留问题：`cleanup()` 在 `finally` 里，但进程被硬杀（`taskkill` / `timeout`）时
+`finally` 不会执行，临时 profile 会一直堆着 —— 实测堆了 4 个。现在每次开窗前会
+`readdirSync(tmpdir())` 扫一遍，**只删超过 6 小时的** `magpie-login-*`。
