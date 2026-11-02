@@ -57,7 +57,9 @@ curl -s -X POST https://cnb.cool/oauth2/device/auth \
 1. **`authorize()` 必须立刻返回** —— 只有 `callback()` 里才轮询。把轮询放进 `authorize`
    会和 magpie 双向死锁（脚手架铁律 2）。
 2. **`slow_down` 要加大间隔，不是立刻重试** —— 否则会被当成刷接口。
-   总预算取 `min(180s, expires_in)`，与 `cnb-cli` 一致。
+   这条路的默认总预算取 `min(180s, expires_in)`，与 `cnb-cli` 一致。
+   （第 2.4 节那条「浏览器网页登录」会显式把预算改成 `expires_in` 本身 —— 它开着窗口等用户，
+   预算比窗口短就会出现「窗口还开着、轮询已经放弃」，用户白点一次却没有额度。）
 3. **它不碰 `~/.cnb/token`** —— 这正是「能加多个账号」的原因。
 
 ### 2.2 本机 `cnb-cli` 的登录态

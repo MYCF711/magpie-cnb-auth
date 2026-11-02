@@ -296,6 +296,13 @@ export async function chromiumLogin({ browser, url, cookieNames = [], timeoutMs 
     "--no-default-browser-check",
     "--disable-extensions",
     "--disable-background-networking",
+    // ⚠ 临时 profile 每次都是「新装」，Edge 会先弹一个**模态的同步确认对话框**
+    //   （实测 2026-11-03：CDP 的页面列表里多出 `edge://sync-confirmation-dialog/`，
+    //   标题「我们现在正在你的所有设备上同步你的浏览数据」），它会盖在登录页上面，
+    //   用户得先点掉才能看到 cnb.cool —— 而他本来只是来登录的。
+    //   Chrome 不认这几个 Edge 专属 feature 名，会直接忽略，不会因此出错。
+    "--disable-sync",
+    "--disable-features=msEdgeSyncPromo,msEdgeSignInPromo,msImplicitSignin",
     url,
   ], { stdio: "ignore", windowsHide: false })
 

@@ -267,3 +267,20 @@ test("组织是用户自己的老组织（没有仓库）时不擅自建仓 —�
   assert.equal(result.org, "acme")
   assert.equal(result.repo, "acme/code", "没有仓库时仍然按约定猜一个路径，好让报错指向它")
 })
+
+test("设备码轮询预算跟窗口一样长，不用默认的 180 秒", async () => {
+  // 真实事故形态：窗口开 5 分钟，用户第 4 分钟才点「确认授权」——
+  // 轮询若还用默认 3 分钟预算，那时早已超时，最后只拿到 session，
+  // 额度还是空的，而用户以为自己「全都点完了」。
+  let seen = null
+  const ctx = makeCtx({
+    chromiumLogin: fakeChromium({ found: { CNBSESSION: SESSION } }),
+    pollDeviceToken: async (dev, opts) => {
+      seen = opts
+      return { access_token: PAT, refresh_token: "r", expires_in: 28_800 }
+    },
+  })
+  await loginViaBrowser({}, ctx)
+  assert.ok(seen, "pollDeviceToken 必须被调用")
+  assert.equal(seen.maxWaitMs, DEVICE.expiresIn * 1000, "预算要按设备码自己的寿命来，别用 180 秒默认值")
+})

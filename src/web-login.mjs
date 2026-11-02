@@ -125,7 +125,12 @@ export async function loginViaBrowser(options = {}, ctx = {}) {
   const tokenSignal = ctx.signal ?? abort.signal
   let tokenDone = false
   const tokenP = Promise.resolve()
-    .then(() => pollDeviceTokenFn(dev, { signal: tokenSignal }))
+    // ⚠ 轮询预算必须跟**窗口**一样长，不能用 `pollDeviceToken` 的默认 180 秒。
+    //   默认预算是给「用户自己去浏览器里点」那条路定的；这里窗口本来就要开 5 分钟，
+    //   预算给 3 分钟的话，用户在第 4 分钟才点「确认授权」＝ token 那一半已超时，
+    //   最后只拿到 session —— 额度还是空的，而用户以为自己「全都点完了」。
+    //   设备码本身活 `expires_in`（实测 599 秒），所以上限取它。
+    .then(() => pollDeviceTokenFn(dev, { signal: tokenSignal, maxWaitMs: Number(dev.expiresIn) * 1000 || undefined }))
     .catch((error) => error)
     .then((value) => {
       tokenDone = true

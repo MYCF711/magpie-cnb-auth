@@ -534,3 +534,27 @@ msedge.exe 52124 | ...\magpie-login-k2LXTV /prefetch:4
 
 **这一段没证明**：登录之后 CNBSESSION 会不会如期出现、确认授权之后设备码那一半会不会拿到 token、
 以及登进去之后建组织 / 建仓库那两个请求上游认不认。这四件事都需要人**真的登一次**。
+
+### 8.8 受控窗口打开后，页面到底是什么状态（CDP 实测）
+
+窗口开出来后，直接连它的调试端口看 `/json/list`，拿到两个事实：
+
+**(1) 登录后会回到确认页 —— CNB 自己保留了返回地址**
+
+```
+https://cnb.cool/?s_url=https%3A%2F%2Fcnb.cool%2Foauth2%2Fdevice%2Fverify%3Fuser_code%3DYRWiHsXz
+```
+
+匿名访问 `oauth2/device/verify?user_code=…` 会被重定向到登录页，并把原地址放在 `s_url` 里。
+所以「用户先登录、登录完自动回到确认页」这件事是站点自己做的 —— 插件不需要自己导航，
+之前担心的「登录完就回不到确认页」不成立。
+
+**(2) 临时 profile 会先弹一个 Edge 同步确认框，盖住登录页**
+
+```
+edge://sync-confirmation-dialog/  |  我们现在正在你的所有设备上同步你的浏览数据
+```
+
+新 profile 对 Edge 来说就是「新装」，它先弹这个模态框，用户得点掉才能看到 cnb.cool。
+已在 `chromiumLogin` 的启动参数里加 `--disable-sync --disable-features=msEdgeSyncPromo,msEdgeSignInPromo,msImplicitSignin`，
+**复测页面数从 2 变 1，同步框消失**（Chrome 会忽略这几个 Edge 专属 feature 名，不影响它）。
