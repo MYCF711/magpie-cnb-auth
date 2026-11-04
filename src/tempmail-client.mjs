@@ -10,8 +10,16 @@
 // ⚠ 这类地址是一次性的：登录成功后应当把邮箱从结果里拿掉，只保留它注册出来的账号，
 //   不要把临时邮箱当成用户的联系方式写进账号名。
 
+import { USER_AGENT } from "./context.mjs"
+
 const BASE = "https://api.internal.temp-mail.io/api"
 const DOMAIN = "yzcalo.com"
+
+// 这个站点也是「网页客户端」形态：显式带官方 UA，别把宿主的 `magpie/<version>` /
+// 运行时的 `node` 透出去（UA 治理规则见 docs/internals.md 第 1 节）。
+function mailHeaders(extra = {}) {
+  return { "user-agent": USER_AGENT, accept: "application/json", ...extra }
+}
 
 function nameOf() {
   return "mk" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
@@ -24,7 +32,7 @@ function nameOf() {
 export async function createTempMailbox({ base = BASE, domain = DOMAIN, name = nameOf() } = {}) {
   const res = await fetch(`${base}/v3/email/new`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: mailHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ name, domain }),
     signal: AbortSignal.timeout(20_000),
   })
@@ -57,6 +65,7 @@ export async function waitTempCode(
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const res = await fetch(`${base}/v3/email/${encodeURIComponent(address)}/messages`, {
+      headers: mailHeaders(),
       signal: AbortSignal.timeout(20_000),
     })
     const list = await res.json().catch(() => null)

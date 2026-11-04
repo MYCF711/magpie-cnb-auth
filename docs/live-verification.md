@@ -275,6 +275,10 @@ live-verify —— 真打上游的验证（不是单测）
 
 汇总：**通过 5 · 失败 0**；`node scripts/live-verify.mjs` 退出码 `0`，`node scripts/privacy-scan.mjs` 退出码 `0`。
 
+> ⚠ **2026-11-04 起 UA 已换**：上表三条 `curl` 里写的 `User-Agent: magpie-cnb-auth/0.1.0` 是**当时的实测记录**，
+> 保留原样只为可追溯。现在的插件发的是完整 Chrome UA（`src/context.mjs` 的 `USER_AGENT`，
+> 理由见 [`internals.md`](./internals.md) 第 1 节）；复现时按那个常量的值填，别再写成 `magpie-cnb-auth/x.y.z`。
+
 ---
 
 ## 5. 发现的问题

@@ -21,6 +21,8 @@ import { join } from "node:path"
 import { createServer } from "node:net"
 import { execFileSync } from "node:child_process"
 
+import { USER_AGENT } from "./context.mjs"
+
 const WIN_EXES = [
   "chrome.exe",
   "360ChromeX.exe",
@@ -180,7 +182,12 @@ async function freePort() {
 }
 
 async function getJson(url, timeoutMs = 5000) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  // 本机 Chromium 的 CDP HTTP 端点（/json/version、/json/list）。虽然它不看 UA，
+  // 也一律用插件那一个 UA 常量：所有出站点只认一份常量，省得下次又漏一处（UA 治理规则）。
+  const res = await fetch(url, {
+    headers: { "user-agent": USER_AGENT },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }

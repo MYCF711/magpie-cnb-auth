@@ -23,6 +23,17 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
+import { USER_AGENT } from "./context.mjs"
+
+/**
+ * 打本机 magpie 网关（127.0.0.1）也**显式带 UA**：不设就会透传宿主的
+ * `magpie/<version>`，而 `<product>/<version>` 形态在部分上游会被判第三方客户端
+ * （403 `TM.00000001`）。统一用插件那一个 UA 常量，见 docs/internals.md 第 1 节。
+ */
+function gatewayHeaders(extra = {}) {
+  return { "content-type": "application/json", "user-agent": USER_AGENT, ...extra }
+}
+
 /** 两个判官分歧超过这个值（钟点）就认为「有人把方向看反了」 */
 export const CLOCK_MAX_SPREAD = 1.5
 
@@ -95,7 +106,10 @@ export async function resolveGatewayBase() {
   for (const port of gatewayCandidates()) {
     const base = `http://127.0.0.1:${port}/v1`
     try {
-      const res = await fetch(`${base}/models`, { signal: AbortSignal.timeout(1500) })
+      const res = await fetch(`${base}/models`, {
+        headers: gatewayHeaders(),
+        signal: AbortSignal.timeout(1500),
+      })
       if (res.ok) {
         cachedBase = base
         return base
@@ -187,7 +201,7 @@ async function askClock(base, model, imageDataUrl, variant) {
   const send = (b) =>
     fetch(`${base}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: gatewayHeaders(),
       body: JSON.stringify(b),
       signal: AbortSignal.timeout(90_000),
     })

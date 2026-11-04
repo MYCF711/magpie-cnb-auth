@@ -186,7 +186,11 @@ test("cookie 通道：非流式请求由插件折叠 SSE，并恒以 stream:true
 
   assert.match(seen.url, /acme\/code\/-\/ai\/chat\/completions$/)
   assert.match(seen.init.headers.cookie, /CNBSESSION=/)
-  assert.match(seen.init.headers["user-agent"], /magpie-cnb-auth\//, "缺 UA 会被 Cloudflare 回 403 Error 1010")
+  assert.match(
+    seen.init.headers["user-agent"],
+    /^Mozilla\/5\.0 \(Windows NT 10\.0; Win64; x64\) AppleWebKit\/537\.36 \(KHTML, like Gecko\) Chrome\/\d+\.\d+\.\d+\.\d+ Safari\/537\.36$/,
+    "缺 UA 会被 Cloudflare 回 403 Error 1010；带版本号的产品名会被判第三方客户端（403 TM.00000001）",
+  )
   assert.equal(JSON.parse(seen.init.body).stream, true, "上游只吃流式")
 })
 

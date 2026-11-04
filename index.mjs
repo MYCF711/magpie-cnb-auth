@@ -42,6 +42,7 @@
 
 import {
   BASE,
+  CLIENT_TAG,
   ICON,
   MODEL_SPECS,
   PLUGIN_VERSION,
@@ -407,7 +408,7 @@ export const CnbAuthPlugin = async (_ctx, rawOptions) => {
     "chat.headers": async (input, output) => {
       const id = input?.model?.providerID ?? input?.provider?.info?.id
       if (id !== PROVIDER) return
-      output.headers["x-cnb-client"] = USER_AGENT
+      output.headers["x-cnb-client"] = CLIENT_TAG
     },
   }
 }

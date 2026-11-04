@@ -104,8 +104,12 @@ test("createGroupWithSession：POST https://cnb.cool/groups（网页侧，api.cn
   assert.equal(headers.origin, "https://cnb.cool")
   assert.equal(headers.referer, "https://cnb.cool/")
   assert.equal(headers["content-type"], "application/json")
-  // 缺 UA 会被 Cloudflare 判 bot（403 Error 1010，HTML 响应）—— 所以它是硬要求
-  assert.match(headers["user-agent"], /^magpie-cnb-auth\//)
+  // 缺 UA 会被 Cloudflare 判 bot（403 Error 1010，HTML 响应）—— 所以它是硬要求；
+  // 值必须是官方客户端的完整 Chrome UA，不能是 `magpie-cnb-auth/x.y.z`（那个形态会被上游
+  // 认成第三方客户端，回 403 TM.00000001）
+  assert.match(headers["user-agent"], /^Mozilla\/5\.0 \(Windows NT 10\.0; Win64; x64\) AppleWebKit\/537\.36/)
+  assert.match(headers["user-agent"], /\(KHTML, like Gecko\) Chrome\/\d+\.\d+\.\d+\.\d+ Safari\/537\.36$/)
+  assert.doesNotMatch(headers["user-agent"], /magpie/i)
 
   assert.deepEqual(JSON.parse(init.body), { path: "tlaloc", description: "由 magpie 的 CNB 插件创建" })
 })

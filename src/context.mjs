@@ -63,8 +63,22 @@ export const PLUGIN_VERSION = "0.1.0"
 /**
  * 所有请求都必须带 UA —— 缺了会被 Cloudflare 判 bot，回
  * `403 Error 1010 browser_signature_banned`，而且错误体是 HTML，看不出是 UA 的锅。
+ *
+ * ⚠ **值必须是「官方客户端」的 UA，不能是 `<产品名>/<版本号>`**：上游网关按
+ * `<product>/<version>` 形态认「第三方客户端」，命中即回
+ * `403 {"error_code":"TM.00000001","error_msg":"网络繁忙，请稍后重试"}`；
+ * 不显式设 UA 时宿主会把 `magpie/<version>` 原样透传，同样命中。
+ * CNB 只有「官方网页（Cookie 会话）」与 OpenAPI（Bearer）两种客户端形状，
+ * 所以这里逐字用一条完整合法的 Chrome UA —— 别改成别的版本号，也别退回产品名。
  */
-export const USER_AGENT = `magpie-cnb-auth/${PLUGIN_VERSION}`
+export const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+/**
+ * 插件自己的身份标签（**不是 UA，绝不许进 User-Agent**）：只给 `x-cnb-client`
+ * 这类自用请求头用。带版本号的产品名会命中上游的第三方客户端拦截。
+ */
+export const CLIENT_TAG = "cnb-auth"
 
 /** 控制台路由（从 cnb.cool 前端 bundle 里抓到的真实路径，别改） */
 export const ROUTES = Object.freeze({
@@ -181,6 +195,7 @@ export const ctx = {
   OAUTH_CLIENT_ID,
   DEFAULT_MODEL,
   USER_AGENT,
+  CLIENT_TAG,
   ROUTES,
   MODEL_SPECS,
   TOOLS_BEFORE_LOGIN,

@@ -27,6 +27,12 @@
 `403 Error 1010 browser_signature_banned` —— 而且响应体是 HTML，看起来像「路径写错了」。
 [`src/http.mjs`](../src/http.mjs) 的 `baseHeaders()` 是唯一的注入点。
 
+**值用「官方客户端」UA，绝不许是 `<产品名>/<版本号>`。** 上游网关按 `<product>/<version>`
+形态认「第三方客户端」，命中即回 `403 {"error_code":"TM.00000001","error_msg":"网络繁忙，请稍后重试"}`；
+而不显式设 UA 时宿主会把 `magpie/<version>` 原样透传，同样命中。CNB 的官方客户端就是官方网页，
+所以 [`src/context.mjs`](../src/context.mjs) 的 `USER_AGENT` 是一条完整合法的 Chrome UA；
+`x-cnb-client` 这类自用头用 `CLIENT_TAG`，**不要**把 `USER_AGENT` 塞进自定义头。
+
 ---
 
 ## 2. 登录：四条路，各自解决不同问题
@@ -203,7 +209,7 @@ POST https://cnb.cool/{org}/{repo}/-/ai/chat/completions
   Origin: https://cnb.cool
   Referer: https://cnb.cool/{org}/{repo}
   Csrftoken: <csrfkey>            （抓不到就不带）
-  User-Agent: magpie-cnb-auth/x.y.z
+  User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36
 ```
 
 四条硬规则：
