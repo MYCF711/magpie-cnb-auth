@@ -3,6 +3,18 @@
 > 每个版本一节，**一条一行**，说用户能感知的变化。
 > 格式与规矩见 [UPDATING.md](./UPDATING.md)。
 
+## 0.1.1 — 2026-11-04
+
+**出站 UA 全部换成官方客户端 UA（同步脚手架 0.3.10 的坑表第 38 条）**
+
+- 上游网关按 `<product>/<version>` 形态识别「第三方客户端」，命中即回
+  `403 {"error_code":"TM.00000001","error_msg":"网络繁忙，请稍后重试"}`；而 magpie 给插件宿主
+  的 UA 固定是 `magpie/<version>`，插件不显式覆盖就原样透传，同样命中
+- 本仓库所有打上游的出站点改为显式带**官方客户端** UA；不再出现 `<包名>/<版本号>`、
+  `node`、`Bun/…` 或截断的 Mozilla
+- 新增 `scripts/check-ua.mjs`（`npm run check:ua`，0 = 合规）、`AGENTS.md` 坑表第 31 条、
+  `CHECKLIST.md` 的 UA 勾选项
+
 ## 0.1.0 — 2026-11-02
 
 **第一个能用的版本：把 CNB 变成一个 magpie 供应商。**
