@@ -17,7 +17,7 @@ test("maskPhone：0086- / +86 / 裸号 / 已打码，一律 3+4", () => {
   assert.equal(maskPhone("13800138000"), "138****8000")
   // 厂商已经打过码的值：不能被二次破坏
   assert.equal(maskPhone("138****8000"), "138****8000")
-  assert.equal(maskPhone("138****8000"), "138****8000")
+  assert.equal(maskPhone("137****0632"), "137****0632")
   // 不是号码形状 → 空串，让调用方回退，而不是显示半截
   assert.equal(maskPhone(""), "")
   assert.equal(maskPhone(undefined), "")
